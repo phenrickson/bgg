@@ -1,0 +1,194 @@
+---
+title: "Predicting Upcoming Board Games"
+author: "github.com/phenrickson/bgg"
+date: "`r Sys.Date()`"
+output: 
+  html_document
+params:
+  url: "https://www.reddit.com/r/boardgames/comments/qyu3bq/kickstarter_roundup_nov_21_2021_20_ending_soon/"
+---
+
+```{r load and set packages, echo=F, warning=F, message=F,  results = 'hide'}
+
+suppressMessages( {
+        
+knitr::opts_chunk$set(echo = F,
+                      error=F,
+                      dev="png",
+                      fig.width = 9,
+                      fig.height = 6)
+
+options(knitr.duplicate.label = "allow")
+
+options(scipen=999)
+
+source(here::here("scripts/load_packages.R"))
+source(here::here("functions/theme_phil.R"))
+library(plumber)
+library(rvest)
+library(htmltab)
+library(RCurl)
+library(RTidyHTML)
+library(XML)
+library(htm2txt)
+
+library(webshot2)
+library(flextable)
+set_flextable_defaults(theme_fun = theme_alafoli,
+                       font.color = "grey10",
+  padding.bottom = 6, 
+  padding.top = 6,
+  padding.left = 6,
+  padding.right = 6,
+  background.color = "white")
+
+# other packages?
+
+
+})
+
+```
+
+
+```{r load packages and scrape, warning=F, message=F}
+
+# Input URL and grab games with BGG IDs.
+
+# feed in URL
+u = params$url
+# get html
+doc = read_html(u)
+# tree parse
+html <- htmlTreeParse(doc, useInternal = TRUE)
+# extract links
+links <- xpathSApply(html, "//a/@href")
+# filter to bgg links
+bgg_links = as_tibble(links[grepl("boardgamegeek.com", links)])
+
+# separate and get ids
+tidy_bgg_links = bgg_links %>%
+        rename(link = value) %>%
+        mutate(game = gsub("https://boardgamegeek.com/", "", link)) %>%
+        separate(game, c("type", "id", "name"), sep="\\/")
+
+# get post details
+tidy_reddit_links = as_tibble(u) %>%
+        rename(link = value) %>%
+        mutate(post = gsub("https://www.reddit.com/r/boardgames/comments/",
+                           "", link)) %>%
+        select(post, link) %>%
+        separate(post, c("post_id", "post_title"), sep = "\\/") %>%
+        mutate(post_date = gsub("crowdfunding_roundup_", "", gsub("_ending_soon", "", gsub("kickstarter_roundup_", "", post_title)))) %>%
+        select(starts_with("post_"), everything()) %>%
+        mutate(date_char = str_to_title(gsub("_", " ", substr(post_date, 1, 11))))
+        
+# games
+games = tidy_bgg_links %>%
+        filter(type == 'boardgame') %>%
+        select(type, id, name)
+
+# function for loading game by id
+source(here::here("functions/get_game_record.R"))
+# function for reading in current bgg data
+source(here::here("functions/get_bgg_data_from_github.R"))
+# function for predicting with trained model
+source(here::here("functions/bake_and_predict_avgweight_and_ratings.R"))
+# # function for plotting posterior
+# source("functions/plot_posterior.R")
+
+conflict_prefer("set_names", "magrittr")
+
+```
+
+
+```{r predict, warning=F, message=F, results= 'hide'}
+
+# Predict BGG ratings and complexity with previously trained models.
+
+# pull ids
+ids = games %>%
+        pull(id)
+
+# feed through predictive models to get predictions
+preds_xgbTree = bake_and_predict_avgweight_and_ratings(ids,
+                                         "xgbTree_fit")
+
+# estimated weight
+complexity = preds_xgbTree$estimated_weight
+ratings = preds_xgbTree$estimated_rating
+
+# combine
+table = ratings %>%
+        spread(outcome, pred) %>%
+        select(-method) %>%
+        left_join(., 
+                  complexity %>%
+                          spread(outcome, pred) %>%
+                          select(game_id, avgweight),
+                  by = "game_id") %>%
+        arrange(desc(baverage))
+
+```
+
+### Table of Estimates for Games from `r tidy_reddit_links$date_char`
+
+The table below displays estimated ratings for the boardgamegeek community rating, geek rating, and complexity games from the reddit weekly Kickstarter roundup. These estimates come from models previously trained on historical boardgamegeek data. For more details, see github.com/phenrickson/bgg for more.
+
+Link to Reddit post:`r params$url`
+
+```{r create flextable, warning=F, message=F}
+
+# add color to tables
+source(here::here("functions/baverage_func.R"))
+source(here::here("functions/average_func.R"))
+source(here::here("functions/avgweight_func.R"))
+
+# edit
+tidy_table = table %>%
+        arrange(desc(average)) %>%
+        mutate(Row = row_number()) %>%
+        mutate(yearpublished = as.character(yearpublished),
+               game_id = as.character(game_id)) %>%
+        rename(Published = yearpublished,
+               BGG_ID = game_id,
+               Game = name) %>%
+        mutate(Post_Date = tidy_reddit_links$date_char) %>%
+        select(Row, Post_Date,  BGG_ID, Published, Game, average, baverage, avgweight)
+
+# get to ft
+ft_table = tidy_table %>%
+        flextable() %>%
+        flextable::autofit() %>%
+        flextable::align(j = c("average", "baverage", "avgweight"),
+                         align = "center",
+                         part = "all") %>%
+        add_header(average = "Estimated",
+                   baverage = "Estimated", 
+                   avgweight = "Estimated",
+                   top = TRUE) %>%
+        merge_h(part = "header") %>%
+        add_footer(top = F, values = paste("Predictions as of ", Sys.Date())) %>%
+        bold(part = "header") %>%
+        border_remove() %>%
+        bg(., j = c("baverage"),
+           bg = baverage_func) %>%
+        bg(., j = c("average"),
+                   bg = average_func) %>%
+       bg(., j = c("avgweight"),
+           bg = avgweight_func) %>%
+  set_caption("Estimates of BGG Ratings for Kickstarter Games")
+
+# display
+ft_table
+
+```
+
+
+```{r save file}
+
+
+#readr::write_rds(ft_table, file = paste("kickstarter_roundup_tables/", tidy_reddit_links$post_date, ".Rds", sep=""))
+#fwrite(tidy_table, file = paste("kickstarter_roundup_tables/", tidy_reddit_links$post_date, ".csv", sep=""))
+
+```
+
