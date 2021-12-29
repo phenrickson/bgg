@@ -1,0 +1,1737 @@
+---
+title: "Estimating Complexity"
+author: Phil Henrickson
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+        toc: true
+        toc_depth: 3
+        number_sections: true
+params:
+  end_training_year: 2019
+---
+
+```{r global settings, echo=F, warning=F, message=F}
+
+knitr::opts_chunk$set(echo = F,
+                      error=F,
+                      dev="png",
+                      fig.width = 10,
+                      fig.height = 6)
+
+options(knitr.duplicate.label = "allow")
+
+options(scipen=999)
+
+source(here::here("scripts/load_packages.R"))
+source(here::here("functions/theme_phil.R"))
+
+```
+
+```{r flextable settings, echo=F, warning=F, message=F}
+
+library(flextable)
+set_flextable_defaults(theme_fun = theme_alafoli,
+                       font.color = "grey10",
+  padding.bottom = 6, 
+  padding.top = 6,
+  padding.left = 6,
+  padding.right = 6,
+  background.color = "white")
+
+```
+
+
+# What is this analysis? {-}
+
+This notebook is for estimating the community rating for complexity for games on boardgamegeek.  One of the key features in predicting a game's average rating or geek rating is its avgweight - complexity. However, this feature is itself voted on by the community, so it is observed at the same time as its overall rating. A game's complexity rating tends to settle pretty quickly, but for upcoming games in which there are relatively few votes, we would prefer to estimate its complexity rather than rely on its vote.
+
+For further analysis and projects related to boardgamegeek data, see github.com/phenrickson/bgg
+
+```{r connect to big query}
+
+
+library(bigrquery)
+
+# get project credentials
+PROJECT_ID <- "gcp-analytics-326219"
+BUCKET_NAME <- "test-bucket"
+
+# authorize
+bq_auth(email = "phil.henrickson@aebs.com")
+
+# establish connection
+bigquerycon<-dbConnect(
+        bigrquery::bigquery(),
+        project = PROJECT_ID,
+        dataset = "bgg"
+)
+
+# query table
+active_games<-DBI::dbGetQuery(bigquerycon, 
+                              'SELECT * FROM bgg.active_games_daily')
+
+# create caption for plots
+my_caption = list(labs(caption = paste(paste("Data from boardgamegeek.com as of", max(as.Date(active_games$timestamp))),
+                        paste("Data and analysis at github.com/phenrickson/bgg"), sep="\n")))
+
+```
+
+
+```{r query tables with game information}
+
+# general game info
+games_info<-DBI::dbGetQuery(bigquerycon, 
+                              'SELECT * FROM bgg.active_games_info')
+
+# game categories
+game_categories<-DBI::dbGetQuery(bigquerycon, 
+                              'SELECT 
+                              a.game_id,
+                              b.category_id,
+                              b.category
+                              FROM bgg.game_categories a
+                               LEFT JOIN bgg.category_ids b 
+                               ON a.category_id = b.category_id')
+
+# game mechanics
+game_mechanics<-DBI::dbGetQuery(bigquerycon, 
+                              'SELECT 
+                              a.game_id,
+                              b.mechanic_id,
+                              b.mechanic
+                              FROM bgg.game_mechanics a
+                               LEFT JOIN bgg.mechanic_ids b 
+                               ON a.mechanic_id = b.mechanic_id')
+
+# game publishers
+game_publishers<-DBI::dbGetQuery(bigquerycon, 
+                              'SELECT 
+                              a.game_id,
+                              b.publisher_id,
+                              b.publisher
+                              FROM bgg.game_publishers a
+                               LEFT JOIN bgg.publisher_ids b 
+                               ON a.publisher_id = b.publisher_id')
+
+# game designers
+game_designers<-DBI::dbGetQuery(bigquerycon, 
+                              'SELECT 
+                              a.game_id,
+                              b.designer_id,
+                              b.designer
+                              FROM bgg.game_designers a
+                               LEFT JOIN bgg.designer_ids b 
+                               ON a.designer_id = b.designer_id')
+
+# game artists
+game_artists<-DBI::dbGetQuery(bigquerycon, 
+                              'SELECT 
+                              a.game_id,
+                              b.artist_id,
+                              b.artist
+                              FROM bgg.game_artists a
+                               LEFT JOIN bgg.artist_ids b 
+                               ON a.artist_id = b.artist_id')
+
+```
+
+# Exploratory Data Analysis
+
+We now will explore how the bgg avgweight is a function of the features we have in the dataset. At this stage in the process, we want to restrict ourselves to looking at our training set and to get a basic understanding of both our outcome variable and the features.
+
+```{r create data for inspection, warning=F, message=F}
+
+# filtering to games with at least 200 user ratings, published after 1900
+min_ratings = 200
+split_year = params$end_training_year
+
+# data set for inspection
+data_inspection = active_games %>% 
+        filter(usersrated > min_ratings) %>%
+        filter(!is.na(name)) %>%
+        filter(!is.na(yearpublished)) %>%
+        filter(yearpublished <= split_year)
+
+```
+
+## Examining Complexity
+
+We'll first connect to the most recent day of BGG data that we have in our database. These are the active rankings of games - where they stand in the BGG database as of the most recent load, which I usually update once a week.
+
+The outcome we care about is **avgweight**, which is the estimated complexity of a game according to the boardgamegeek community.
+
+```{r examine outcome variables, warning=F}
+
+# data set for inspection
+data_inspection %>%
+        ggplot(., aes(x=avgweight))+
+        geom_density(fill = 'grey80',
+                     alpha = 0.6)+
+        # geom_density_ridges(alpha=0.8,
+        #                     quantile_lines = T,
+        #                     bandwidth=0.1,
+        #                     quantile_fun = function(x, ...)median(x))+
+        theme_phil()+
+        guides(fill = "none")+
+        my_caption+
+        xlab("BGG Complexity")
+
+```
+
+How has this distribution changed over time? Let's look at it over time, filtering from 1950 onwards.
+
+```{r complexity over time since 1950, warning=F}
+
+library(plotly)
+
+# filtering to 1950
+#ggplotly(
+data_inspection %>%
+        filter(yearpublished > 1950) %>%
+        filter(!is.na(avgweight)) %>%
+        ggplot(., aes(x=yearpublished,
+                      label = name,
+                      size = usersrated,
+                      y=avgweight))+
+        geom_jitter(alpha=0.35)+
+        theme_phil()+
+        guides(fill = "none")+
+        my_caption+
+        ylab("")+
+        xlab("BGG Average Weight")+
+        theme(legend.title = element_text())+
+        guides(size = guide_legend(title.position = 'top',
+                                   title = 'User Ratings'))+
+        geom_smooth(method = 'loess',
+                    formula = 'y ~ x',
+                    show.legend = F)
+#)
+
+```
+
+Let's zoom in more, looking from 1990 onwards.
+
+```{r looking at average weight from 1990 onwards, warning=F}
+
+# filtering to 1950
+#ggplotly(
+data_inspection %>%
+        filter(yearpublished >= 1990) %>%
+        filter(!is.na(avgweight)) %>%
+        ggplot(., aes(x=yearpublished,
+                      label = name,
+                      size = usersrated,
+                      y=avgweight))+
+        geom_jitter(alpha=0.35)+
+        theme_phil()+
+        guides(fill = "none")+
+        my_caption+
+        ylab("")+
+        xlab("BGG Complexity")+
+        theme(legend.title = element_text())+
+        guides(size = guide_legend(title.position = 'top',
+                                   title = 'User Ratings'))+
+        geom_smooth(method = 'loess',
+                    formula = 'y ~ x',
+                    show.legend = F)
+#)
+```
+
+Let's look at it by 5 year chunks, starting from 1970.
+
+```{r complexity by decade, fig.height=10}
+
+data_inspection %>%
+        filter(yearpublished > 1970) %>%
+        filter(!is.na(avgweight)) %>%
+        mutate(decade = factor(plyr::round_any(yearpublished, 5, floor))) %>%
+        ggplot(., aes(x=avgweight,
+                      fill = decade,
+                      y=decade))+
+        geom_density_ridges(alpha=0.8,
+                            quantile_lines = T,
+                            bandwidth=0.1,
+                            quantile_fun = function(x, ...)median(x))+
+        theme_phil()+
+        scale_fill_grey()+
+        guides(fill = "none")+
+        my_caption+
+        ylab("")+
+        xlab("BGG Complexity")
+
+```
+
+What is the relationship between user ratings and the complexity rating? I won't filter out games with a low number of ratings for this view.
+
+```{r outcomes vs user ratings, warning=F, message=F}
+
+# data set for inspection
+active_games %>% 
+        filter(!is.na(name)) %>%
+        filter(!is.na(yearpublished)) %>%
+        filter(yearpublished <= split_year) %>%
+        # mutate(name = case_when(avgweight > 3.5 | log(usersrated) > 9 ~ name,
+        #                         TRUE ~ NA_character_)) %>%
+        ggplot(., aes(y=avgweight,
+                 #     label =name,
+                      x=log(usersrated)))+
+        geom_jitter(alpha=0.1)+
+        theme_phil()+
+        # geom_text(check_overlap=T,
+        #           hjust = 0.25,
+        #           size =1.5, alpha=0.8)+
+        geom_smooth(method = 'loess',
+                    formula = 'y ~ x')+
+        stat_cor(p.accuracy = .01,
+                 col = 'blue')+
+        my_caption+
+        ylab("BGG Complexity")+
+        xlab("Users Rated (logged)")
+
+```
+
+## Features
+
+We can now look at the relationship between a few of the features in our dataset and the average weight.
+
+### Playing Time and Player Count
+
+Complexity and playing time tend to go hand in hand, so we see a somewhat similar relationship between playing time and ratings for the average rating, but notice that it doesn't have as much of a linear relationship for the geek rating. I'm pretty sure what's going on here is that there is a cadre of wargamers on BGG that love a complex, lengthy wargame, and this group will rate these games highly and give them a high average rating. But, that group is pretty small, so these games don't attract enough user ratings to boost their geek rating. This means the relationship between playtime (and to a similar extent, complexity) is stronger for the average rating than for the geek rating.
+
+```{r playing time 1, warning=F, message=F}
+
+# focus on playing time
+data_inspection %>%
+        select(-rank, -stddev, -numtrading, -numwanting, -numwishing, -numcomments) %>%
+        filter(yearpublished > 1900) %>%
+        melt(., id.vars = c("game_id", "name", "type", "timestamp", "usersrated", "baverage", "average", "avgweight")) %>%
+        filter(variable == 'playingtime') %>%
+        ggplot(., aes(x=log1p(value),
+                      label =name,
+                      y=avgweight))+
+        geom_smooth(method = 'loess', formula = 'y ~ x',
+                    se=F,
+                    alpha=0.8,
+                    show.legend=F)+
+        geom_text(check_overlap =T,
+                  size = 2)+
+        geom_jitter(alpha=0.25)+
+  #      geom_smooth(method = 'loess', formula = 'y ~ x') +
+        guides(col = "none",
+               label = "none")+
+        theme_phil()+
+        xlab("Playing Time (logged)")+
+        theme(legend.title = element_text())+
+        my_caption
+
+```
+
+We can similarly look at the player count.
+
+```{r minplayers, warning=F, message=F}
+
+# focus on playing time
+data_inspection %>%
+        select(-rank, -stddev, -numtrading, -numwanting, -numwishing, -numcomments) %>%
+        filter(yearpublished > 1900) %>%
+        melt(., id.vars = c("game_id", "name", "type", "timestamp", "usersrated", "baverage", "average", "avgweight")) %>%
+        filter(variable == 'maxplayers') %>%
+        ggplot(., aes(x=log1p(value),
+                      label =name,
+                      y=avgweight))+
+        geom_smooth(method = 'loess', formula = 'y ~ x',
+                    se=F,
+                    alpha=0.8,
+                    show.legend=F)+
+        geom_text(check_overlap =T,
+                  size = 2)+
+        geom_jitter(alpha=0.25,
+                    width = 0.1)+
+  #      geom_smooth(method = 'loess', formula = 'y ~ x') +
+        guides(col = "none",
+               label = "none")+
+        theme_phil()+
+        xlab("Max Players (logged)")+
+        theme(legend.title = element_text())+
+        my_caption
+
+
+# focus on playing time
+data_inspection %>%
+        select(-rank, -stddev, -numtrading, -numwanting, -numwishing, -numcomments) %>%
+        filter(yearpublished > 1900) %>%
+        filter(minplayers > 0) %>%
+        melt(., id.vars = c("game_id", "name", "type", "timestamp", "usersrated", "baverage", "average", "avgweight")) %>%
+        filter(variable == 'minplayers') %>%
+        ggplot(., aes(x=log1p(value),
+                      label =name,
+                      y=avgweight))+
+        geom_smooth(method = 'loess', formula = 'y ~ x',
+                    se=F,
+                    alpha=0.8,
+                    show.legend=F)+
+        geom_text(check_overlap =T,
+                  size = 2)+
+        geom_jitter(alpha=0.25,
+                    width = 0.1)+
+  #      geom_smooth(method = 'loess', formula = 'y ~ x') +
+        guides(col = "none",
+               label = "none")+
+        theme_phil()+
+        xlab("Min Players (logged)")+
+        theme(legend.title = element_text())+
+        my_caption
+
+```
+
+### Mechanics
+
+What are the mechanics associated with complexity?
+
+```{r mechanics complexity, fig.height=10, fig.width=10, warning=F, message=F}
+
+min_games = 50
+
+# filter to games with publishers that had at least n games
+data_inspection %>%
+        left_join(., game_mechanics,
+            by = "game_id") %>%
+        select(timestamp, game_id, name, mechanic_id, mechanic, everything()) %>%
+        filter(!is.na(mechanic)) %>%
+        filter(!is.na(avgweight)) %>%
+  #filter(mechanic_id %in% top_mechanics$mechanic_id) %>%
+  group_by(mechanic_id, mechanic) %>%
+  mutate(median_avgweight = median(avgweight),
+         n_games = n_distinct(game_id)) %>%
+  ungroup() %>%
+  filter(n_games > min_games) %>%
+  ggplot(., aes(x=reorder(mechanic,
+                          median_avgweight),
+                y=avgweight))+
+  geom_jitter(width=0.2,
+              height=0,
+              alpha=0.25)+
+  coord_flip()+
+  theme_phil()+
+  geom_boxplot(alpha=0.75,
+               outlier.size = 0)+
+        xlab("Game Mechanic")+
+  ggtitle("BGG Complexity by Game Mechanic",
+          subtitle = str_wrap(paste("Displaying average weight by mechanic for all games published through", params$end_training_year, "for mechanics with at least", min_games, "games.", sep=" "), 125))+
+  theme(plot.title = element_text(size=12),
+        plot.subtitle =  element_text(size=10),
+        axis.text.y = element_text(size=8))+
+        my_caption
+
+```
+
+Let's also create a simple number of mechanics variable and see how that compares.
+
+```{r mechanics number vs complexity, warning=F, message=F}
+
+# filter to games with publishers that had at least n games
+data_inspection %>%
+        left_join(., game_mechanics %>%
+                          group_by(game_id) %>%
+                            summarize(number_mechanics = n_distinct(mechanic_id),
+                                      .groups = 'drop'),
+            by = "game_id") %>%
+        ggplot(., aes(x=number_mechanics,
+                      label = name,
+                      y = avgweight))+
+        geom_jitter(width=0.2,
+              height=0,
+              alpha=0.25)+
+        geom_text(check_overlap=T,
+                  size =2)+
+        theme_phil()+
+        xlab("Number of Mechanics")+
+        ylab("BGG Complexity")+
+        my_caption+
+        geom_smooth(method = 'loess',
+                    formula = 'y~ x')+
+        stat_cor(p.accuracy = 0.01,
+                 col = 'blue')
+
+```
+
+### Designers
+
+What designers typically have the most complexity (and which designers have the most variation)? Notice Vlaada's super wide distribution, ha.
+
+```{r designers complexity, fig.height=12, fig.width=10, warning=F, message=F}
+
+min_games = 10
+
+# rank designers with min games
+top_designers = data_inspection %>%
+        left_join(., game_designers,
+            by = "game_id") %>%
+        select(timestamp, game_id, name, designer_id, designer, everything()) %>%
+        filter(!is.na(designer)) %>%
+  #filter(designer_id %in% top_designers$designer_id) %>%
+  group_by(designer_id, designer) %>%
+  summarize(median_avgweight = median(avgweight),
+         n_games = n_distinct(game_id),
+         .groups = 'drop') %>%
+        filter(n_games > min_games) %>%
+        arrange(desc(median_avgweight)) %>%
+        mutate(rank = row_number())
+
+
+# plot
+data_inspection %>%
+        left_join(., game_designers,
+            by = "game_id") %>%
+        select(timestamp, game_id, name, designer_id, designer, everything()) %>%
+        filter(!is.na(designer)) %>%
+  #filter(designer_id %in% top_designers$designer_id) %>%
+        group_by(designer_id, designer) %>%
+        mutate(median_avgweight = median(avgweight),
+               n_games = n_distinct(game_id)) %>%
+        filter(n_games > min_games) %>%
+  ggplot(., aes(x=reorder(designer,
+                          median_avgweight),
+                y=avgweight))+
+  geom_jitter(width=0.2,
+              height=0,
+              alpha=0.25)+
+  coord_flip()+
+  theme_phil()+
+  geom_boxplot(alpha=0.75,
+               outlier.size = 0)+
+        xlab("Game Mechanic")+
+  ggtitle("BGG Complexity by Game Designer",
+          subtitle = str_wrap(paste("Displaying average weight by designer for all games published through", params$end_training_year, "for designers with at least", min_games, "games.", sep=" "), 125))+
+  theme(plot.title = element_text(size=12),
+        plot.subtitle =  element_text(size=10),
+        axis.text.y = element_text(size=8))+
+        my_caption
+
+rm(min_games)
+
+```
+
+## Publishers
+
+Let's look at complexity by publisher.
+
+```{r publishers complexity, fig.height=20, fig.width=10, warning=F, message=F}
+
+# list of publishers i have previously flagged as okay
+publisher_list = 
+                readr::read_rds(here::here("active", "publisher_list.Rdata"))
+
+min_games = 25
+
+# plot
+data_inspection %>%
+        left_join(., game_publishers,
+            by = "game_id") %>%
+        select(timestamp, game_id, name, publisher_id, publisher, everything()) %>%
+        filter(!is.na(publisher)) %>%
+  #filter(publisher_id %in% top_publishers$publisher_id) %>%
+        group_by(publisher_id, publisher) %>%
+        mutate(median_avgweight = median(avgweight),
+               n_games = n_distinct(game_id)) %>%
+        filter(n_games > min_games) %>%
+  ggplot(., aes(x=reorder(publisher,
+                          median_avgweight),
+                y=avgweight))+
+  geom_jitter(width=0.2,
+              height=0,
+              alpha=0.25)+
+  coord_flip()+
+  theme_phil()+
+  geom_boxplot(alpha=0.75,
+               outlier.size = 0)+
+        xlab("Game Mechanic")+
+  ggtitle("BGG Complexity by Game Publisher",
+          subtitle = str_wrap(paste("Displaying average weight by publisher for all games published through", params$end_training_year, "for publishers with at least", min_games, "games.", sep=" "), 125))+
+  theme(plot.title = element_text(size=12),
+        plot.subtitle =  element_text(size=10),
+        axis.text.y = element_text(size=8))+
+        my_caption
+
+
+```
+
+## Artists
+
+I imagine for artists it's basically just which publishers they work with?
+
+```{r plot artists, warning=F, message=F, fig.height=9, fig.width=10}
+
+min_games = 10
+
+# rank artists with min games
+top_artists = data_inspection %>%
+        left_join(., game_artists,
+            by = "game_id") %>%
+        select(timestamp, game_id, name, artist_id, artist, everything()) %>%
+        filter(!is.na(artist)) %>%
+  #filter(artist_id %in% top_artists$artist_id) %>%
+  group_by(artist_id, artist) %>%
+  summarize(median_avgweight = median(avgweight),
+         n_games = n_distinct(game_id),
+         .groups = 'drop') %>%
+        filter(n_games > min_games) %>%
+        arrange(desc(median_avgweight)) %>%
+        mutate(rank = row_number())
+
+
+# plot
+data_inspection %>%
+        left_join(., game_artists,
+            by = "game_id") %>%
+        select(timestamp, game_id, name, artist_id, artist, everything()) %>%
+        filter(!is.na(artist)) %>%
+  #filter(artist_id %in% top_artists$artist_id) %>%
+        group_by(artist_id, artist) %>%
+        mutate(median_avgweight = median(avgweight),
+               n_games = n_distinct(game_id)) %>%
+        filter(n_games > min_games) %>%
+  ggplot(., aes(x=reorder(artist,
+                          median_avgweight),
+                y=avgweight))+
+  geom_jitter(width=0.2,
+              height=0,
+              alpha=0.25)+
+  coord_flip()+
+  theme_phil()+
+  geom_boxplot(alpha=0.75,
+               outlier.size = 0)+
+        xlab("Game Mechanic")+
+  ggtitle("BGG Complexity by Game Artist",
+          subtitle = str_wrap(paste("Displaying average weight by artist for all games published through", params$end_training_year, "for artists with at least", min_games, "games.", sep=" "), 125))+
+  theme(plot.title = element_text(size=12),
+        plot.subtitle =  element_text(size=10),
+        axis.text.y = element_text(size=8))+
+        my_caption
+
+rm(min_games)
+
+```
+
+# Modeling
+
+## Create Dataset
+
+```{r create dataset function, warning=F, message=F}
+
+# function for creating training and test sets
+source(here::here("functions/combine_and_split_bgg_datasets.R"))
+
+```
+
+We'll assemble our training dataset to start, meaning we will start with games published before `r params$end_training_year` and then pull in the other datasets to create features at the game level.
+                                        
+```{r use function to create training set}
+
+games_datasets= combine_and_split_bgg_datasets(datasets_list = list("active_games" = active_games,
+"game_categories" = game_categories,
+                                        "game_designers" = game_designers,
+                                        "game_mechanics" = game_mechanics,
+                                        "game_publishers" = game_publishers,
+                                        "game_artists" = game_artists),
+                        min_users = 200,
+                        year_split = params$end_training_year,
+                        publisher_list = publisher_list,
+                        top_designers = top_designers,
+                        top_artists = top_artists)
+
+# use the training set
+games_train = games_datasets$train %>%
+        filter(!is.na(avgweight))
+
+```
+
+We'll assemble our training dataset to start, meaning we will start with games published before `r params$end_training_year` and then pull in the other datasets to create features at the game level. 
+
+## Recipe
+
+We'll the  set up the functions we'll use for training models. This will consist of creating an initial recipe, then functions for fitting workflows with tidymodels at the nested level.
+
+```{r recipe for avgweights, warning=F, message=F, echo=T}
+
+recipe_avgweight<- recipe(avgweight~ .,
+                    x = games_train) %>%
+        update_role(all_numeric(),
+                      new_role = "predictor") %>%
+          update_role(timestamp,
+                        usersrated,
+                        game_id,
+                        name,
+                        average,
+                        baverage,
+                        new_role = "id") %>%
+          step_filter(!is.na(yearpublished)) %>%
+          step_filter(cat_collectible_components !=1 &
+                      cat_expansion_for_basegame != 1) %>% # remove specific categories that count expansions
+        #  step_filter(yearpublished > 1900) %>%
+          step_mutate(published_prior_1900 = case_when(yearpublished<1900 ~ 1,
+                                                       TRUE ~ 0)) %>%
+          step_mutate(yearpublished = case_when(yearpublished <= 1900 ~ 1900,
+                                                       TRUE ~ as.numeric(yearpublished))) %>% # truncate yearpublished
+        #  step_mutate(years_since_published = as.numeric(year(Sys.Date()))-yearpublished) %>%
+          #step_mutate(years_since_published  = year(Sys.Date()) - yearpublished) %>%
+          step_impute_median(minplayers,
+                                    maxplayers,
+                                    playingtime,
+                                    minage) %>% # medianimpute numeric predictors
+          step_mutate(minplayers = case_when(minplayers < 1 ~ 1,
+                                                     minplayers > 10 ~ 10, # truncate
+                                                     TRUE ~ minplayers),
+                      maxplayers = case_when(maxplayers < 1 ~ minplayers,
+                                                     maxplayers > 20 ~ 20,
+                                                     TRUE ~ maxplayers)) %>% # truncate player range
+          step_mutate(time_per_player = playingtime/ maxplayers) %>% # make time per player variable
+          step_mutate_at(starts_with("cat_"),
+                           fn = ~ replace_na(., 0)) %>%
+          step_mutate_at(starts_with("mech_"),
+                           fn = ~ replace_na(., 0)) %>%
+          step_mutate_at(starts_with("art_"),
+                           fn = ~ replace_na(., 0)) %>%
+          step_mutate_at(starts_with("des_"),
+                           fn = ~ replace_na(., 0)) %>%
+          step_mutate_at(starts_with("pub_"),
+                           fn = ~ replace_na(., 0)) %>%  
+            step_mutate_at(starts_with("art_"),
+                           fn = ~ replace_na(., 0)) %>%
+          step_mutate(number_mechanics = rowSums(across(starts_with("mech_"))),
+                  #    number_artists = rowSums(across(starts_with("art_"))),
+                      number_categories = rowSums(across(starts_with("cat_")))) %>%
+          step_log(playingtime,
+                   time_per_player,
+                   offset = 1) %>%
+          step_mutate(star_wars = case_when(grepl("Star Wars", name) == T ~ 1,
+                                            TRUE ~ 0), role = "predictor") %>%
+          step_zv(all_predictors()) %>%
+          step_nzv(all_predictors(),
+                   -starts_with("pub_"),
+                   -starts_with("des_"),
+                   -starts_with("art_"),
+                   freq_cut = 100/1)
+
+# normalize
+recipe_norm_avgweight<-recipe_avgweight %>%
+#  step_poly(number_mechanics, degree = 2) %>%
+  step_normalize(all_predictors())
+
+# # summary of recipe
+# summary(recipe_avgweight)
+
+```
+
+This will let us bake our training set and then melt it to get into an outcome-game level that we can nest for modeling.
+
+```{r bake melt and nest, warning=F, message=F, echo=T}
+
+# bake
+baked_train = recipe_avgweight %>%
+        prep(games_train, strings_as_factor = F) %>%
+        bake(new_data = NULL)
+
+# baked with normalization
+baked_train_norm = recipe_norm_avgweight %>%
+  prep(games_train, strings_as_factor = F) %>%
+  bake(new_data = NULL)
+
+# get all vars
+vars=names(baked_train %>%
+             select(-avgweight))
+
+# melt
+melted_baked_train <- baked_train %>%
+        melt(., id.vars = vars) %>%
+        rename(outcome = value,
+               outcome_type = variable) %>%
+        nest(-outcome_type)
+
+```
+
+Next is just setting up a bunch of functions for fitting and tuning models at the nested level.
+
+```{r functions for models with parsnip}
+
+# simple linear regression
+lm_mod <- 
+  linear_reg() %>% 
+  set_engine("lm")
+
+# stan linear regression
+set.seed(123)
+prior_dist <- rstanarm::student_t(df = 1)
+stan_reg_mod <-   
+  linear_reg() %>% 
+  set_engine("stan", 
+             prior_intercept = prior_dist, 
+             prior = prior_dist,
+             iter = 8000)
+
+# penalized linear regression
+glmnet_reg_mod<- 
+  linear_reg(penalty = tune::tune(),
+             mixture = 0.5) %>%
+  set_engine("glmnet")
+
+# specify grid for tuning
+glmnet_grid <- tibble(penalty = 10^seq(-4, -0.5, 
+                                       length.out = 30))
+
+# # k nearest neighbors
+# library(kknn)
+# # specify knn model
+# knn_mod<-nearest_neighbor(
+#         mode = "regression",
+#         engine = "kknn",
+#         neighbors = tune::tune()
+# )
+# 
+# # generate grid
+# knn_grid <- expand.grid(
+#         neighbors = c(5,10, 15, 25, 75, 150)
+# )
+
+# xgbtree for regression
+xgbTree_reg_mod <-
+  parsnip::boost_tree(
+    mode = "regression",
+    trees = 250,
+    sample_size = tune::tune(),
+    min_n = tune::tune(),
+    tree_depth = tune::tune()) %>%
+  set_engine("xgboost")
+
+# xgbTree grid
+xgbTree_grid <- 
+  expand.grid(
+    sample_size = c(0.5, 0.75, 0.95),
+    min_n = c(5, 15, 25),
+    tree_depth = 3
+  )
+
+# ranger model for regression
+ranger_reg_mod<- parsnip::rand_forest(
+  mode = "regression",
+  trees = 500,
+  mtry = tune::tune()) %>%
+  set_engine("ranger", importance = "permutation",
+             quantreg = TRUE)
+
+# grid for ranger
+ranger_grid <- 
+  expand.grid(
+    mtry = c(2, 9,15, 25, 50)
+  )
+
+# rename func
+rename_func<-function(x) {
+  
+  x<-gsub("cat_memory", "cat_memory_game", x)
+  x<-gsub("cat_spiessecret_agents", "cat_spies_secret_agents", x)
+ # x<-gsub("number_artists", "number_top_artists", x)
+  x<-gsub("cat_","", x)
+  x<-gsub("mech_","", x)
+  x<-gsub("pub_","", x)
+  x<-gsub("des_","", x)
+  x<-gsub("art_", "Artist ", x)
+  x<-gsub("avgweight", "Average Weight", x)
+  x<-gsub("yearpublished", "Year Published", x)
+  x<-gsub("minage", "Min Age", x)
+  x<-gsub("playingtime", "Playing Time", x)
+  x<-gsub("maxplayers", "Max Players", x)
+  x<-gsub("minplayers", "Min Players", x)
+  x<-gsub("_", " ", x)
+  
+  str_to_title(x)
+
+}
+
+# specify regression metrics
+reg_metrics<-metric_set(yardstick::rmse,
+                        yardstick::rsq,
+                        yardstick::mae,
+                        yardstick::mape)
+
+```
+
+```{r create functions for tidymodels workflows}
+
+# function for standard recipe
+recipe_function = function(df, setting) {
+  
+    # change to factor if classification
+  if (setting == 'classification') {df$outcome = as.factor(df$outcome)}
+  else if (setting == 'regression') {df$outcome = df$outcome} 
+  else {'select classification or regression'}
+  
+  recipe = recipe_train <-
+    recipe(outcome ~ ., data = df) %>%
+    update_role(timestamp,
+                usersrated,
+                average,
+                baverage,
+                game_id,
+                name,
+                new_role = "id") %>%
+    step_zv(all_predictors()) %>%
+    step_corr(all_predictors(),
+              threshold = 0.95) 
+}
+
+
+# function for normalized recipe with nzv
+norm_nzv_recipe_function = function(df, setting) {
+  
+    # change to factor if classification
+  if (setting == 'classification') {df$outcome = as.factor(df$outcome)}
+  else if (setting == 'regression') {df$outcome = df$outcome} 
+  else {'select classification or regression'}
+  
+  recipe = recipe_train <-
+    recipe(outcome ~ ., data = df) %>%
+    update_role(timestamp,
+                average,
+                baverage,
+                usersrated,
+                game_id,
+                name,
+                new_role = "id") %>%
+    step_zv(all_predictors()) %>%
+          step_nzv(all_predictors(),
+                   freq_cut = 150/1) %>%
+    step_corr(all_predictors(),
+              threshold = 0.95) %>%
+    step_normalize(all_predictors())
+  
+}
+
+# function for normalized recipe
+norm_recipe_function = function(df, setting) {
+  
+    # change to factor if classification
+  if (setting == 'classification') {df$outcome = as.factor(df$outcome)}
+  else if (setting == 'regression') {df$outcome = df$outcome} 
+  else {'select classification or regression'}
+  
+  recipe = recipe_train <-
+    recipe(outcome ~ ., data = df) %>%
+    update_role(timestamp,
+                usersrated,
+                average,
+                baverage,
+                game_id,
+                name,
+                new_role = "id") %>%
+    step_corr(all_predictors(),
+              threshold = 0.95) %>%
+    step_normalize(all_predictors())
+  
+}
+  
+# function for fitting workflow using a selected model and recipe
+fit_workflow_function <- function(df, input_model, input_recipe, metrics) {
+  
+      # change to factor if classification
+  if (metrics == 'classification') {df$outcome = as.factor(df$outcome)}
+  else if (metrics == 'regression') {df$outcome = df$outcome} 
+  else {'select classification or regression'}
+
+  # fit model
+  fit_wf <-
+    workflow() %>%
+    add_model(input_model) %>%
+    add_recipe(input_recipe) %>%
+    fit(df)
+
+}
+
+# function for fitting a model over resamples
+resamples_workflow_function <- function(df, input_model, input_recipe, metrics) {
+  
+  #     # change to factor if classification
+  # if (metrics == 'classification') {df$outcome = as.factor(df$outcome)}
+  # else if (metrics == 'regression') {df$outcome = df$outcome} 
+  # else {'select classification or regression'}
+  #       
+ # create folds
+  set.seed(1999)
+  train_folds = vfold_cv(df,
+            strata = outcome,
+            v = 5,
+            repeats = 1)
+
+  # fit model
+  fit_wf <-
+    workflow() %>%
+    add_model(input_model) %>%
+    add_recipe(input_recipe) %>%
+          fit_resamples(train_folds,
+            control = control_grid(save_pred = TRUE),
+            metrics = metrics)
+
+}
+
+
+# function for tuning a workflow over folds
+tune_workflow_function <- function(df, input_model, input_recipe, input_grid, metrics) {
+  
+# change to factor if classification
+  if (metrics == 'classification') {df$outcome = as.factor(df$outcome)}
+  else if (metrics == 'regression') {df$outcome = df$outcome} 
+  else {'select classification or regression'}
+  
+    # create folds
+  set.seed(1999)
+  train_folds = vfold_cv(df,
+            strata = outcome,
+            v = 5,
+            repeats = 1)
+
+  # if regression then
+  if (metrics == "regression") {
+  fit_wf <-
+    workflow() %>%
+    add_model(input_model) %>%
+    add_recipe(input_recipe) %>%
+    tune_grid(train_folds,
+            grid = input_grid,
+            control = control_grid(save_pred = TRUE),
+            metrics = reg_metrics)
+  } else if (metrics == "classification") {
+    fit_wf <-
+    workflow() %>%
+    add_model(input_model) %>%
+    add_recipe(input_recipe) %>%
+    tune_grid(train_folds,
+            grid = input_grid,
+            control = control_grid(save_pred = TRUE),
+            metrics = class_metrics)
+  } else {"select regression or classification"}
+  
+}
+
+
+## for finalizing workflow
+# function to finalize workflow using tune results
+finalize_workflow_function<- function(df, input_model, input_recipe, tune_results, metrics) {
+  
+  # change to factor if classification
+  if (metrics == 'classification') {df$outcome = as.factor(df$outcome)}
+  else if (metrics == 'regression') {df$outcome = df$outcome} 
+  else {'select classification or regression'}
+
+  #fit workflow on train data
+  fit_wf <-
+    workflow() %>%
+    add_model(input_model) %>%
+    add_recipe(input_recipe)
+  
+  # finalize workflow
+  final_wf <-
+    fit_wf %>%
+    finalize_workflow(tune_results) %>%
+    fit(df)
+  
+}
+   
+```
+
+# Train Models
+
+We've set up our workflows and recipes, we'll now train the models. To speed up the computational time, I'm only using a penalized regression and boosted trees.
+
+```{r train models}
+
+cores = parallel::detectCores()-1
+doParallel::registerDoParallel(cores)
+
+library(broom.mixed)
+conflict_prefer("set_names", "magrittr")
+conflict_prefer("flatten", "purrr")
+
+# avgweight
+set.seed(1999)
+avgweight_models = melted_baked_train %>%
+        mutate(glmnet_tune = map(data,
+                          ~ tune_workflow_function(df = .x,
+                                                     input_model = glmnet_reg_mod,
+                                                   input_grid = glmnet_grid,
+                                                     input_recipe = norm_recipe_function(.x, setting = 'regression'),
+                                                     metrics = 'regression'))) %>%
+        mutate(xgbTree_tune = map(data,
+                          ~ tune_workflow_function(df = .x,
+                                                     input_model = xgbTree_reg_mod,
+                                                   input_grid = xgbTree_grid,
+                                                     input_recipe = recipe_function(.x, setting = 'regression'),
+                                                     metrics = 'regression')))
+        # mutate(ranger_tune = map(data,
+        #                   ~ tune_workflow_function(df = .x,
+        #                                              input_model = ranger_reg_mod,
+        #                                            input_grid = ranger_grid,
+        #                                              input_recipe = recipe_function(.x, setting = 'regression'),
+        #                                              metrics = 'regression')))
+
+```
+
+Now refit with the best tuning parameters from the tuning results.
+
+```{r refit with tuning, warning=F, message=F}
+
+avgweight_models = avgweight_models %>%
+        mutate(glmnet_best = map(glmnet_tune, ~ .x %>% show_best(n=1))) %>%
+        mutate(glmnet_results = map2(.x = glmnet_tune,
+                                       .y = glmnet_best,
+                                       ~ .x %>% collect_predictions(parameters = .y))) %>%
+        mutate(glmnet_fit = map2(.x=data,
+                                   .y = glmnet_best,
+                                   ~ finalize_workflow_function(df = .x,
+                                                        input_model = glmnet_reg_mod,
+                                                        tune_results = .y,
+                                                        input_recipe = norm_recipe_function(.x, setting = 'regression'),
+                                                        metrics = "regression"))) %>%
+        mutate(xgbTree_best = map(xgbTree_tune, ~ .x %>% show_best(n=1))) %>%
+        mutate(xgbTree_results = map2(.x = xgbTree_tune,
+                               .y = xgbTree_best,
+                               ~ .x %>% collect_predictions(parameters = .y))) %>%
+        mutate(xgbTree_fit = map2(.x=data,
+                                   .y = xgbTree_best,
+                                   ~ finalize_workflow_function(df = .x,
+                                                        input_model = xgbTree_reg_mod,
+                                                        tune_results = .y,
+                                                        input_recipe = recipe_function(.x, setting = 'regression'),
+                                                        metrics = "regression")))
+        # mutate(ranger_best = map(ranger_tune, ~ .x %>% show_best(n=1))) %>%
+        # mutate(ranger_results = map2(.x = ranger_tune,
+        #                        .y = ranger_best,
+        #                        ~ .x %>% collect_predictions(parameters = .y))) %>%
+        # mutate(ranger_fit = map2(.x=data,
+        #                            .y = ranger_best,
+        #                            ~ finalize_workflow_function(df = .x,
+        #                                                 input_model = ranger_reg_mod,
+        #                                                 tune_results = .y,
+        #                                                 input_recipe = recipe_function(.x, setting = 'regression'),
+        #                                                 metrics = "regression"))) 
+
+```
+ 
+## Model Exploration
+
+### Penalized Linear Regression
+
+The first model was a linear regression with elastic net regularization, which I refer to as a penalized model because 1) I struggle at saying regularization 2) I struggle at typing regularization.
+
+```{r get the glmnet tuning results, fig.height=10, fig.width=8}
+
+avgweight_models %>%
+        mutate(glmnet_metrics = map(.x = glmnet_tune,
+                                    ~ .x %>% collect_metrics(summarize=F))) %>%
+        select(outcome_type, glmnet_metrics) %>%
+        unnest(glmnet_metrics) %>%
+        ggplot(., aes(x=penalty,
+                      group = id,
+                      by = id,
+                      y=.estimate,
+                      color = id))+
+        geom_line()+
+        facet_wrap(.metric ~ outcome_type,
+                   scales="free_y",
+                   ncol =2) +
+        theme_phil()+
+        scale_color_viridis_d()
+
+```
+
+We can see how well the penalized regression model does in resampling.
+
+```{r glmnet pred vs actual, warning=F, message=F}
+
+avgweight_models %>%
+        select(outcome_type, glmnet_results) %>%
+        unnest() %>%
+        mutate(.pred = case_when(.pred > 5 ~ 5,
+                                 .pred < 1 ~ 1,
+                                 TRUE ~ .pred)) %>%
+        ggplot(., aes(x=.pred,
+                      y=outcome))+
+        geom_point(alpha=0.5)+
+        facet_wrap(~outcome_type,
+                   scales ="free")+
+        theme_phil()+
+        geom_abline(slope = 1, intercept=0)+
+        stat_cor(p.accuracy = 0.1,
+                 col = 'blue')+
+        geom_smooth(method = 'lm', formula = 'y ~x')
+
+```
+
+Let's also get the coefficients and plot.
+
+```{r get coefficients from model and plot, fig.height=10, fig.width=8, warning=F, message=F}
+
+training_coefs = avgweight_models %>%
+  mutate(glmnet_coefs = map(glmnet_fit, ~ .x %>% extract_fit_parsnip() %>%
+                              tidy())) %>%
+  select(outcome_type, glmnet_coefs)
+
+ # for me
+training_coefs %>%
+    unnest() %>%
+    filter(term != '(Intercept)') %>%
+    mutate(term = rename_func(term)) %>%
+    filter(abs(estimate) > .01) %>%
+        mutate(method = 'glmnet') %>%
+    ggplot(., aes(x= reorder(term, estimate),
+                  color = outcome_type,
+                  y = estimate))+
+    geom_point(alpha=0.6)+
+    coord_flip()+
+ #   facet_wrap(username ~.)+
+    #scale_color_grey(start = 0.2, end = 0.6)+
+    scale_color_colorblind()+
+    theme_phil()+
+    theme(axis.text.y = element_text(size=rel(0.75)))+
+    geom_hline(yintercept = 0,
+               linetype = 'dotted')+
+    xlab("Feature")+
+    ylab("Estimated Effect on Outcome")+
+        theme(panel.grid.major = element_blank(),
+              panel.grid.minor = element_blank())+
+        my_caption+
+        ggtitle("What predicts a game's complexity?",
+                subtitle = str_wrap("Coefficients from a penalized linear regression trained on BGG's complexity rating. Predictors centered and scaled", 90))
+```
+
+### xgbTree
+
+We also fit a model using gradient boosted trees, which is more flexible and better able to pick up interactions/nonlinearities. We can see how well it does
+
+```{r tuning parameters, warning=F, message=F}
+
+avgweight_models %>%
+        select(outcome_type, xgbTree_results) %>%
+        unnest() %>%
+        mutate(method = 'xgbTree') %>%
+        select(outcome_type, outcome, id, .pred, .row, outcome, method) %>%
+                ggplot(., aes(x=.pred,
+                              y= outcome))+
+                geom_point(alpha=.5)+
+                facet_wrap(method~outcome_type,
+                           scales="free")+
+                geom_abline(slope = 1,
+                            intercept = 0)+
+                stat_cor(p.accuracy = 0.1,
+                         col = 'blue')+
+                theme_phil()+
+                my_caption
+
+```
+
+While we don't have coefficients from these nonparametric models, we can get a sense of the importance of specific features by looking at the permutation importance - how much worse the models did when a variable was randomly shuffled from its true value.
+
+```{r get vip for each, warning=F, message=F, fig.height=8, fig.width=8}
+
+library(vip)
+# get variable importance
+
+vips = avgweight_models %>%
+        mutate(xgbTree_vip = map(xgbTree_fit,
+                                 ~ vip::vi(.x$fit$fit)))
+
+# get vips and plot
+# average
+vips %>%
+        select(outcome_type, xgbTree_vip) %>%
+                          unnest() %>%
+                          mutate(method = 'xgbTree') %>%
+                          group_by(outcome_type) %>%
+                          slice_max(., Importance, n =40) %>%
+        mutate(Variable = rename_func(Variable)) %>%
+        ggplot(., aes(x=reorder(Variable, Importance),
+                   #   color = method,
+                 #     fill= method,
+                      y=Importance))+
+        geom_col(width = .75,
+                 position = position_dodge(width = .75))+
+        coord_flip()+
+        theme_phil()+
+        theme(panel.grid.major = element_blank(),
+              panel.grid.minor = element_blank())+
+        my_caption+scale_fill_colorblind()+
+        scale_color_colorblind()+
+        xlab("Feature")+
+        ylab("Permutation Importance")+
+        facet_wrap(~method)
+
+```
+
+### Partial Dependence
+
+```{r get xgbTree model for pdp, warning=F, message=F}
+
+# xgbTree
+xgbTree_mods = avgweight_models %>%
+        mutate(xgbTree_mod = map(xgbTree_fit, ~ .x %>% extract_fit_parsnip())) %$% xgbTree_mod
+
+# training object
+train_obj = baked_train %>%
+  select(one_of(xgbTree_mods[[1]]$fit$feature_names)) %>%
+        as.data.frame()
+
+# get 16 most influential predictors
+top_predictors = vips %>%
+                          select(outcome_type, xgbTree_vip) %>%
+                          unnest() %>%
+                          mutate(method = 'xgbTree') %>%
+                          group_by(outcome_type) %>%
+                          slice_max(., Importance, n =16) %>%
+        pull(Variable)
+
+library(pdp)
+conflict_prefer("partial", "pdp")
+# create a function for partial
+partial_func<-function(mod, feature, train_obj) {
+  
+  var<-enquo(feature)
+  var1<-rlang::sym(paste(feature))
+  
+  foo<-pdp::partial(mod,
+                  train = train_obj,
+             pred.var = paste(feature),
+             center =T,
+         #    trim.outliers = T,
+             ice=T,
+             plot=F,
+             type = "regression")
+  
+  out<-foo %>%
+    as_tibble() %>%
+    mutate(variable = paste(feature)) %>%
+    rename(value = !!var1) %>%
+    select(variable, value, yhat, yhat.id)
+  
+  return(out)
+  
+  # out %>%
+  #   ggplot(., aes(x=value,
+  #               y = yhat,
+  #               group = yhat.id))+
+  #   geom_path(alpha=0.25)+
+  #   theme_minimal()+
+  #   facet_wrap(variable~.)
+
+}
+
+partials <-foreach(i = 1:length(top_predictors), .combine=rbind.data.frame) %do% {
+          
+          partial_func(mod = xgbTree_mods[[1]]$fit,
+             feature = top_predictors[i],
+             train_obj = train_obj) %>%
+                        mutate(method = "xgbTree") %>%
+                        mutate(outcome_type = "avgweight")
+}
+
+```
+
+```{r plot pdps for xgbTree, fig.height=10, fig.width=10, warning=F, message=F}
+
+# set levels
+levels = top_predictors %>%
+        rename_func()
+
+# now plot
+partials %>%
+        mutate(variable = rename_func(variable)) %>%
+        mutate(variable = factor(variable,
+                                 levels = levels)) %>%
+          ggplot(., aes(x=value,
+                        y = yhat))+
+          geom_line(aes(group = yhat.id), alpha=0.05)+
+          stat_summary(fun=median,
+                       geom="line",
+                       col = "orange",
+                       alpha = 0.6)+
+          coord_cartesian(ylim = c(-1, 2))+
+          facet_wrap(variable~.,
+                       scales = "free_x")+
+          theme_phil()+
+          xlab("Feature Value")+
+          ylab("Effect on Geek Rating")+
+          labs(title = "Partial Dependence Plots for Complexity - xgbTree",
+               subtitle = str_wrap(paste("Centered individal conditional expectation plots for top predictors from xgbTree. Model trained on games published prior to", params$end_training_year+1, "with at least ", params$min_ratings, " user ratings.", 2), 150))+
+  my_caption
+
+rm(partials)
+```
+
+# Validating the Models
+
+We'll recall our set aside test dataset and then bake it with our recipe.
+
+```{r create test set, warning=F, message=F}
+
+games_test = games_datasets$test
+
+# bake
+baked_test = recipe_avgweight %>%
+        prep(games_train, strings_as_factor = F) %>%
+        bake(games_test)
+
+# melt
+melted_baked_test <- baked_test %>%
+        melt(., id.vars = vars) %>%
+        rename(outcome = value,
+               outcome_type = variable) %>%
+        nest(-outcome_type)
+
+```
+
+We'll now predict our baked test set with the previously trained models. 
+
+```{r predict the test set}
+
+set.seed(1999)
+test_preds = avgweight_models %>%
+        select(outcome_type, 
+         glmnet_fit,
+         xgbTree_fit) %>%
+        mutate(glmnet_preds = map(glmnet_fit,
+                                ~ .x %>%
+                                        predict(baked_test) %>%
+                                        mutate(.pred = case_when(.pred > 5 ~ 5,
+                                                                 .pred < 1 ~ 1,
+                                               TRUE ~ .pred)) %>%
+                                        rename(glmnet = .pred))) %>%
+        mutate(xgbTree_preds = map(xgbTree_fit,
+                                ~ .x %>%
+                                        predict(baked_test) %>%
+                                        mutate(.pred = case_when(.pred > 5 ~ 5,
+                                                                 .pred < 1 ~ 1,
+                                               TRUE ~ .pred)) %>%
+                                        rename(xgbTree = .pred))) %>%
+        left_join(., melted_baked_test,
+                  by = c("outcome_type"))
+
+```
+
+How correlated are the two models?
+
+```{r check the two models correlations, warning=F, message=F}
+
+test_preds %>%
+        select(outcome_type, glmnet_preds, xgbTree_preds, data) %>%
+        unnest() %>%
+        select(outcome_type, game_id, name, glmnet, xgbTree, average) %>%
+        ggplot(., aes(x=glmnet,
+                      label = name,
+                      y=xgbTree))+
+        geom_point(alpha=0.6)+
+        geom_text(check_overlap=T,
+                  size =2)+
+        theme_phil()+
+        my_caption+
+        coord_cartesian(xlim=c(0.74, 5.25),
+                        ylim = c(0.74, 5.25))+
+        stat_cor(p.accuracy = 0.01,
+                 col = 'blue')
+
+```
+
+
+## Validation Set: `r paste(params$end_training_year + 1, params$end_training_year +2, sep = " - ")`
+
+We'll evaluate how the models did in predicting `r paste(params$end_training_year + 1, params$end_training_year +2, sep = " - ")`
+
+```{r evaluate predictions for 2019, warning=F, message=F}
+
+results= test_preds %>%
+        select(outcome_type, data,
+               glmnet_preds,
+               xgbTree_preds) %>%
+        unnest() %>%
+        select(outcome_type, yearpublished, outcome, game_id, name, 
+               glmnet,
+               xgbTree) %>%
+        mutate(glmnet = case_when(glmnet > 5 ~ 5,
+                                  glmnet < 1 ~ 1,
+                                  TRUE ~ glmnet)) %>%
+        mutate(xgbTree = case_when(xgbTree > 5 ~ 5,
+                                   xgbTree < 1 ~ 1,
+                                   TRUE ~ xgbTree)) %>%
+        mutate(null = mean(games_train$avgweight)) %>%
+        filter(yearpublished == params$end_training_year +1 | yearpublished == params$end_training_year+2) %>%
+        melt(., id.vars = c("outcome_type", "yearpublished", "outcome", "game_id", "name")) %>%
+        rename(method = variable,
+               pred = value) %>%
+        group_by(yearpublished, outcome_type, method) %>%
+        reg_metrics(truth = outcome,
+                    estimate = pred)
+
+results %>%
+        mutate_if(is.numeric, round, 2) %>%
+        filter(.metric == 'rmse') %>%
+        mutate(yearpublished = as.character(yearpublished)) %>%
+        arrange(.metric) %>%
+        spread(outcome_type, .estimate) %>%
+        arrange(avgweight) %>%
+        flextable() %>%
+        flextable::autofit() %>%
+        set_caption("Validation Set Results using RMSE")
+
+results %>%
+        mutate_if(is.numeric, round, 2) %>%
+        filter(.metric == 'rsq') %>%
+        mutate(yearpublished = as.character(yearpublished)) %>%
+        arrange(.metric) %>%
+        spread(outcome_type, .estimate) %>%
+        arrange(avgweight) %>%
+        flextable() %>%
+        flextable::autofit() %>%
+        set_caption("Validation Set Results using R2")
+
+
+
+results %>%
+        mutate_if(is.numeric, round, 2) %>%
+        filter(.metric == 'mape') %>%
+        mutate(yearpublished = as.character(yearpublished)) %>%
+        arrange(.metric) %>%
+        spread(outcome_type, .estimate) %>%
+        arrange(avgweight) %>%
+        flextable() %>%
+        flextable::autofit() %>%
+        set_caption("Validation Set Results using MAPE")
+
+```
+
+We can also plot the predicted vs actual for each model.
+
+```{r predicted vs actual for valid set, fig.height=10, warning=F, message=F}
+
+preds_year =test_preds %>%
+        select(outcome_type, data, 
+               glmnet_preds, 
+               xgbTree_preds) %>%
+        unnest() %>%
+        select(outcome_type, yearpublished, game_id, name, outcome,
+               glmnet, 
+               xgbTree) %>%
+        filter(yearpublished == params$end_training_year+1 | yearpublished == params$end_training_year + 2)
+
+preds_year %>%
+        melt(., id.vars = c("outcome_type", "yearpublished", "outcome", "game_id", "name")) %>%
+        rename(method = variable,
+               pred = value) %>%
+        ggplot(., aes(x=pred,
+                      label = name,
+                      y=outcome))+
+        geom_point(alpha=0.5)+
+        geom_text(check_overlap=T,
+                  size = 1.5)+
+        facet_wrap(yearpublished + method ~ outcome_type,
+                   ncol =2)+
+        theme_phil()+
+        my_caption+
+        stat_cor(p.accuracy = 0.1,
+                 col = 'blue')+
+        geom_abline(slope = 1,
+                    intercept = 0,
+                    linetype = 'dotted')+
+        geom_smooth(method = 'lm',
+                    formula = 'y ~ x',
+                    se = F)
+        
+
+```
+
+## Full Table of `r paste(params$end_training_year + 1, params$end_training_year +2, sep = " - ")` Predictions
+
+We'll look at the predicted ratings and the percentiles from the model for the geek rating to see how they compared to the actual.
+
+```{r prediction ratings for year looking at top 100}
+
+# set color functions
+# set color functions
+weight_func<- function(x) {
+  
+  breaks<-seq(1, 5, 0.1)
+#  breaks = weight_deciles
+  colorRamp=colorRampPalette(c("deepskyblue1", "white", "red"))
+  col_palette <- colorRamp(length(breaks))
+  mycut <- cut(x, 
+    breaks = breaks,
+    include.lowest = TRUE, 
+    right=T,
+    label = FALSE)
+  col_palette[mycut]
+  
+}
+
+# predicted
+preds_year %>%
+        filter(outcome_type == 'avgweight') %>%
+        mutate_if(is.numeric, round, 2) %>%
+        mutate(ID = as.character(game_id),
+               Game = name,
+               Published = as.character(yearpublished),
+               Actual = outcome,
+               Outcome = outcome_type)  %>%
+        arrange(desc(Actual)) %>%
+        mutate(Rank = row_number()) %>%
+        select(Rank, ID, Game, Published, Outcome, Actual, glmnet, xgbTree) %>%
+        mutate_if(is.numeric, round, 2) %>%
+        flextable() %>%
+        flextable::autofit() %>%
+        flextable::bg(., j = c("Actual", "glmnet", "xgbTree"),
+                      bg = weight_func) %>%
+        set_caption(paste(params$end_training_year+1, " - Estimated Complexity from Models"))
+
+```
+
+## Test Set: `r params$end_training_year+3` And On
+
+We'll now do the same thing, predicting upcoming years.
+
+```{r predict 2020 table, warning=F, message=F}
+
+# 
+preds_year= test_preds %>%
+        select(outcome_type, data,
+               glmnet_preds, 
+               xgbTree_preds) %>%
+        unnest() %>%
+        select(outcome_type,
+               yearpublished, 
+               game_id, name, outcome, 
+               glmnet, 
+               xgbTree) %>%
+        filter(yearpublished >= params$end_training_year+3) %>%
+        mutate(glmnet = case_when(glmnet > 5 ~ 5,
+                                  glmnet < 1 ~ 1,
+                                  TRUE ~ glmnet)) %>%
+        mutate(xgbTree = case_when(xgbTree > 5 ~ 5,
+                                   xgbTree < 1 ~ 1,
+                                   TRUE ~ xgbTree))
+
+# predicted
+preds_year%>%
+        filter(outcome_type == 'avgweight') %>%
+        mutate_if(is.numeric, round, 2) %>%
+        mutate(ID = as.character(game_id),
+               Game = name,
+               Published = as.character(yearpublished),
+               Actual = outcome,
+               Outcome = outcome_type)  %>%
+        arrange(desc(Actual)) %>%
+        mutate(Row = row_number()) %>%
+        select(Row, ID, Game, Published, Outcome, Actual, glmnet, xgbTree) %>%
+        mutate_if(is.numeric, round, 2) %>%
+        flextable() %>%
+        flextable::autofit() %>%
+        flextable::bg(., j = c("Actual", "glmnet", "xgbTree"),
+                      bg = weight_func) %>%
+        set_caption(paste(params$end_training_year+2, " - Estimated Complexity from Models"))
+
+
+```
+
+Save outputs
+
+```{r save predictions, warning=F, message=F, eval=F}
+
+oos_preds_out = avgweight_models %>%
+        select(outcome_type, xgbTree_results) %>%
+        mutate(method = "xgbTree") %>%
+        unnest() %>%
+        select(method, outcome_type, .pred, .row) %>%
+        bind_rows(., 
+                  avgweight_models %>%
+                          select(outcome_type, glmnet_results) %>%
+                          mutate(method = 'glmnet') %>%
+                          unnest() %>%
+                          select(method, outcome_type, .pred, .row)) %>%
+        left_join(., baked_train %>%
+                          mutate(.row = row_number()) %>%
+                          select(yearpublished, game_id, name, .row, avgweight),
+                  by = ".row") %>%
+        select(method, outcome_type, yearpublished, game_id, name, avgweight, .pred)
+
+test_preds_out = test_preds %>%
+        select(outcome_type, xgbTree_preds, data) %>%
+        mutate(method = "xgbTree") %>%
+        unnest() %>%
+        rename(.pred = xgbTree, 
+               avgweight = outcome) %>%
+        select(method, outcome_type, yearpublished, game_id, name, avgweight, .pred) %>%
+        bind_rows(.,
+                  test_preds %>%
+                          select(outcome_type, glmnet_preds, data) %>%
+                          mutate(method = "glmnet") %>%
+                          unnest() %>%
+                          rename(.pred = glmnet, 
+                                 avgweight = outcome) %>%
+                          select(method, outcome_type, yearpublished, game_id, name, avgweight, .pred))
+
+
+# bind_rows(oos_preds_out,
+#           test_preds_out) %>%
+#         filter(method == 'xgbTree') %>%
+#         mutate(.pred = case_when(.pred > 5 ~ 5,
+#                                  .pred < 1 ~ 1,
+#                                  TRUE ~ .pred)) %>%
+#         arrange(desc(avgweight)) %>%
+#         mutate_if(is.numeric, round, 2) %>%
+#         mutate(ID = as.character(game_id),
+#                Game = name,
+#                Method = method,
+#                Published = as.character(yearpublished),
+#                Actual = avgweight,
+#                Estimated = .pred,
+#                Outcome = outcome_type)  %>%
+#         arrange(desc(Actual)) %>%
+#         mutate(Row = row_number()) %>%
+#         select(Row, ID, Game, Published, Outcome, Actual, Estimated) %>%
+#         mutate_if(is.numeric, round, 2) %>%
+#         head(25) %>%
+#         flextable() %>%
+#         flextable::autofit() %>%
+#         flextable::bg(., j = c("Actual", "Estimated"),
+#                       bg = weight_func) %>%
+#         flextable::bg(., i = ~ ID == 348955,
+#                       j = c("Row", "ID", "Game", "Published", "Outcome"),
+#                       bg = 'grey80')
+        
+# 
+# save(test_preds_out, file = paste("predict_bgg_ratings_files/test_preds_out_", Sys.Date(), ".Rdata", sep=""))
+# save(oos_preds_out, file = paste("predict_bgg_ratings_files/oos_preds_out_", Sys.Date(), ".Rdata", sep=""))
+
+```
+
+Save pieces used in modeling: recipes, models, workflows.
+
+```{r save recipes and omodels}
+
+# datasets used
+games_datasets_avgweight = games_datasets
+
+# prep recipe
+prepped_recipe_avgweight = recipe_avgweight %>%
+        prep(games_train, strings_as_factor=F)
+
+# models obj
+trained_models_avgweight = avgweight_models
+
+# save
+readr::write_rds(games_datasets_avgweight, file = paste(here::here("predict_complexity/data", paste("games_datasets_avgweight_", Sys.Date(), ".Rdata", sep=""))))
+
+readr::write_rds(prepped_recipe_avgweight, file = paste(here::here("predict_complexity/models", paste("prepped_recipe_avgweight_", Sys.Date(), ".Rdata", sep=""))))
+
+readr::write_rds(trained_models_avgweight, file = paste(here::here("predict_complexity/models", paste("trained_models_avgweight_", Sys.Date(), ".Rdata", sep=""))))
+
+#save(games_datasets, file = paste("predict_bgg_avgweight_files/games_datasets_", Sys.Date(), ".Rdata", sep=""))
+#save(prepped_recipe_avgweight, file = paste("predict_bgg_avgweight_files/prepped_recipe_avgweight_", Sys.Date(), ".Rds", sep=""))
+#save(trained_models_obj, file = paste("predict_bgg_avgweight_files/trained_models_obj_", Sys.Date(), ".Rds", sep=""))
+
+```
