@@ -131,7 +131,7 @@ game_artists<-DBI::dbGetQuery(bigquerycon,
 
 # What is this Analysis? {-}
 
-This notebook is for building predictive models of the boardgamegeek community's average and geek ratings. Based on historical data, what features of games are associated with higher or lower ratings? Using what we learn, which upcoming games do we expect to be highly rated?
+This notebook is for building predictive models of the BoardGameGeek community's average and geek ratings. Based on historical data, what features of games are associated with higher or lower ratings? Using what we learn, which upcoming games do we expect to be highly rated?
 
 To answer these questions, we'll make use of historical data from boardgamegeek. We will connect to a database containing game features and their current ratings. In training models, we will restrict ourselves to games published through `r params$end_training_year`. We will evaluate the performance of our models by evaluating their performance in predicting games published in `r params$end_training_year + 1`.
 
