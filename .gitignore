@@ -45,3 +45,4 @@ vignettes/*.pdf
 .Rds
 .Rdata
 .DS_Store
+.Proj
