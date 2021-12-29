@@ -1,0 +1,1177 @@
+---
+title: "Inspecting and Adjusting BGG Ratings"
+author: github.com/phenrickson/bgg
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+        toc: true
+        toc_depth: 3
+        number_sections: true
+---
+
+# What is this Analysis?
+
+This notebook is for examining current ratings from boardgamegeek.com with the aim of computing different versions of these ratings. The main goal is to compute alternative ranks to **adjust for a tendency of the BGG ratings to skew towards complex and recently released games**. This is not a novel contribution, but this notebook aims to explain some of the considerations behind calculating different ratings for games as well as refresh these ratings frequently off a live connection to the BGG database.
+
+For further analysis and projects related to boardgamegeek data, see github.com/phenrickson/bgg
+
+```{r global settings, echo=F, warning=F, message=F}
+
+knitr::opts_chunk$set(echo = F,
+                      dev="png",
+                      fig.width = 10,
+                      fig.height = 6)
+
+options(knitr.duplicate.label = "allow")
+
+options(scipen=999)
+
+```
+
+```{r load and set packages, warning=F, message=F, include=FALSE, results = 'hide'}
+
+source(here::here("scripts/load_packages.R"))
+source(here::here("functions/theme_phil.R"))
+
+```
+
+```{r connect to big query, warning=F, message=F}
+
+library(bigrquery)
+
+# get project credentials
+PROJECT_ID <- "gcp-analytics-326219"
+BUCKET_NAME <- "test-bucket"
+
+# authorize
+bq_auth(email = "phil.henrickson@aebs.com")
+
+# establish connection
+bigquerycon<-dbConnect(
+        bigrquery::bigquery(),
+        project = PROJECT_ID,
+        dataset = "bgg"
+)
+
+# query table
+active_games<-DBI::dbGetQuery(bigquerycon, 
+                              'SELECT * FROM bgg.active_games_daily')
+
+# bgg_rankings<-bq_table_query(bq_bgg,
+#                         query = 
+#                         quiet = F)
+
+# # set project and schema
+# bq_bgg<- bq_dataset(project = PROJECT_ID,
+#                                     dataset = 'bgg')
+
+```
+
+# Examining BGG Ratings
+
+We'll load in data previously pulled from BGG and begin our analysis. There are a couple of different variables we're interested in exploring: the average rating, the geek rating, and the average weight, or complexity. For the average and geek ratings, votes can range from 1 to 10.
+
+```{r plot distribution of ratings, fig.height=6}
+
+active_games %>%
+  filter(!is.na(avgweight)) %>%
+  select(average, baverage) %>%
+  gather() %>%
+  ggplot(., aes(x=value))+
+  geom_histogram(bins=50)+
+  facet_wrap(key~.,
+             ncol = 1)+
+  theme_phil()
+```
+
+The geek rating is the game's average plus around 1000 baseline 5.5 votes added, which serve as a prior to prevent games with few ratings from moving to the top of the geek list.
+
+Additionally, users can rate the **complexity** of games on BGG, where games with a complexity of 1 are very simple where games with a complexity of 5 are extremely difficult to learn.
+
+```{r plot distribution of complexity, fig.height=6}
+
+## histogram of complexity
+active_games %>%
+        filter(!is.na(avgweight)) %>%
+        ggplot(., aes(x=avgweight))+
+        geom_histogram(bins=40,
+                       color = 'white')+
+        theme_phil()+
+        xlab("Game Complexity")+
+        ylab("Number of Games")
+
+# ## histogram of complexity
+# active_games %>%
+#         filter(!is.na(avgweight)) %>%
+#         ggplot(., aes(x=avgweight))+
+#   geom_density(fill = "deepskyblue1",
+#                alpha=0.5,
+#                color = "white")+
+#         theme_phil()+
+#         xlab("Game Complexity")+
+#         ylab("Number of Games")
+
+```
+
+If we look at the average rating of games on vs their complexity, we can see that a game's rating is heavily correlated with its complexity.
+
+```{r look at correlation between rating and weight, warning=F}
+
+# complexity average rating
+active_games %>%
+       # sample_n(10000) %>%
+        filter(!is.na(avgweight)) %>%
+        ggplot(., aes(x=jitter(avgweight,amount = 0.05),
+                      label = name,
+                      y=average))+
+        geom_point(alpha=0.15, aes(size = usersrated))+
+        xlab("Game Complexity")+
+        ylab("Average BGG Rating")+
+        geom_smooth(col = "red",
+                    formula = 'y ~ x',
+                    method = "lm")+
+        # geom_text(check_overlap = T,
+        #           nudge_x = 0.05,
+        #           size=2,
+        #           nudge_y = 0.05)+
+        # geom_text_repel(size=2,
+        #                 max.overlaps = 50)+
+        theme_phil()+
+        scale_size_area(limits = c(100, 100000))+
+        theme(legend.title = element_text(),
+              legend.position = "top")+
+        guides(size = guide_legend(title = "Users Rated"))+
+        stat_cor(p.accuracy = 0.001)
+
+
+```
+
+We can also plot this with labels to pick out particular games.
+
+```{r same plot but with labels, warning=F, message=F}
+
+# complexity average with labels
+active_games %>%
+      #  sample_n(10000) %>%
+        filter(!is.na(avgweight)) %>%
+        ggplot(., aes(x=jitter(avgweight,amount = 0.05),
+                      label = name,
+                      y=average))+
+        geom_point(alpha=0.15)+
+        xlab("Game Complexity")+
+        ylab("Average BGG Rating")+
+        geom_smooth(method="lm", 
+                    formula = 'y ~ x',
+                    col = "red")+
+        geom_text(check_overlap = T,
+                  nudge_x = 0.05,
+                  size=2,
+                  nudge_y = 0.05)+
+        # geom_text_repel(size=2,
+        #                 max.overlaps = 50)+
+        theme_phil()+
+    #    scale_size_area(limits = c(100, 100000))+
+        theme(legend.title = element_text(),
+              legend.position = "top")
+        # guides(size = guide_legend(title = "Users Rated"))
+
+
+```
+
+The average rating is also a function of time, as we've seen higher ratings for newer games.
+
+```{r plot average rating over time, warning=F, message=F}
+
+# without size
+active_games %>%
+        filter(yearpublished > 1975) %>%
+        mutate(date = as.Date(paste(yearpublished, "01", "01", sep="-"))) %>% 
+        ggplot(., aes(x=date, 
+                      label = name,
+                      y=average))+
+        geom_point(alpha=0.25)+
+        xlab("Year ")+
+        ylab("Average Rating")+
+        geom_smooth(col = "red",
+                    formula = 'y ~ x',
+                    method = 'loess')+
+        theme_phil()
+
+```
+
+We can add the number of user ratings to size to see how that affects things.
+
+```{r average rating over time with size, warning=F, message=F}
+
+# average rating over time
+# with size
+active_games %>%
+        filter(!is.na(avgweight)) %>%
+        filter(yearpublished > 1975) %>%
+        mutate(date = as.Date(paste(yearpublished, "01", "01", sep="-"))) %>% 
+        ggplot(., aes(x=date, 
+                      label = name,
+                      y=average))+
+        geom_point(alpha=0.15, 
+                   aes(size = usersrated))+
+        xlab("Year ")+
+        ylab("Average BGG Rating")+
+        geom_smooth(col = "red",
+                    method = 'loess',
+                    formula = 'y ~ x')+
+        theme_phil()+
+        scale_size_area(limits = c(100, 100000))+
+        theme(legend.title = element_text(),
+              legend.position = "top")+
+        guides(size = guide_legend(title = "Users Rated"))
+
+```
+
+## Geek Ratings vs Average Ratings
+
+Now, so far we've just looked at the average rating, which is simply the avearge of community ratings for a given game. Most people care about the Geek ratings, which uses Bayesian averaging to account for the fact that games with relatively few votes will tend to have high averages. The Geek ratings start every game off with 1000 votes at 5.5, which means that it takes a decent number of users rating the game to actually move the baseline rating. 
+
+If we size by the number of users rated, we see how games with good or bad Geek ratings require a significant number of user ratings. This is the intent of the Bayesian averaging, where it takes a lot of people having an opinion on a game to shift it away from the average (the prior).
+
+```{r compare geek vs average, warning=F, message=F}
+
+# # no size
+# active_games %>%
+#         filter(!is.na(avgweight)) %>%
+#         filter(yearpublished > 1975) %>%
+#         mutate(date = as.Date(paste(yearpublished, "01", "01", sep="-"))) %>% 
+#         mutate(decade = plyr::round_any(yearpublished, 10)) %>%
+#         ggplot(., aes(x=average,
+#                       label = name,
+#                    #   color = factor(decade),
+#                       y=baverage))+
+#         geom_point(alpha=.15)+
+#         ylab("BGG Geek Rating")+
+#         xlab("Average BGG Rating")+
+#   #      geom_smooth(col = "red")+
+#         theme_phil()+
+#         scale_size_area(limits = c(100, 100000))+
+#         theme(legend.title = element_text(),
+#               legend.position = "top")+
+#         geom_vline(xintercept = 5.5,
+#                    col = 'grey40',
+#                    linetype = 'dashed',
+#                    alpha = 0.8)+
+#         geom_hline(yintercept = 5.5,
+#                    col = 'grey40',
+#                    linetype = 'dashed',
+#                    alpha = 0.8)
+
+# no size
+active_games %>%
+        filter(!is.na(avgweight)) %>%
+        filter(yearpublished > 1975) %>%
+        mutate(date = as.Date(paste(yearpublished, "01", "01", sep="-"))) %>% 
+        mutate(decade = plyr::round_any(yearpublished, 10)) %>%
+        ggplot(., aes(x=average,
+                      label = name,
+                   #   color = factor(decade),
+                      y=baverage))+
+        geom_point(alpha=.15,
+                   aes(size = usersrated))+
+        ylab("BGG Geek Rating")+
+        xlab("Average BGG Rating")+
+  #      geom_smooth(col = "red")+
+        theme_phil()+
+        scale_size_area(limits = c(100, 100000))+
+        theme(legend.title = element_text(),
+              legend.position = "top")+
+        geom_vline(xintercept = 5.5,
+                   col = 'grey40',
+                   linetype = 'dashed',
+                   alpha = 0.8)+
+        geom_hline(yintercept = 5.5,
+                   col = 'grey40',
+                   linetype = 'dashed',
+                   alpha = 0.8)+
+        guides(size = guide_legend(title = "Users Rated"))+
+  annotate("text",
+           label = "Popular, Bad Games",
+           x = 4, y=4.5)+
+    annotate("text",
+           label = "Popular, Good Games",
+           x = 7, y=8.5)
+
+```
+
+We can also break this down by decade released to see how time drives this as well.
+
+```{r plot bgg vs average with decade and size, warning=F, message=F}
+
+# decade faceted
+active_games %>%
+        filter(!is.na(avgweight)) %>%
+        filter(yearpublished >= 1970) %>%
+        mutate(date = as.Date(paste(yearpublished, "01", "01", sep="-"))) %>% 
+        mutate(decade = plyr::round_any(yearpublished, 10)) %>%
+        ggplot(., aes(x=average,
+                      label = name,
+                   #   color = factor(decade),
+                      y=baverage))+
+        geom_point(alpha=.15,
+                   aes(size = usersrated))+
+        ylab("BGG Geek Rating")+
+        xlab("Average BGG Rating")+
+  #      geom_smooth(col = "red")+
+        theme_phil()+
+        scale_size_area(limits = c(100, 100000))+
+        theme(legend.title = element_text(),
+              legend.position = "top")+
+        guides(size = guide_legend(title = "Users Rated"))+
+   #  #   scale_color_brewer(palette = 'Blues')+
+        # guides(color = guide_colorbar(title.position = 'top',
+        #                               title = 'Year Published',
+        #                             barheight=0.5,
+        #                             barwidth=10))+
+        scale_color_viridis_d(option = 'D')+
+        guides(size = guide_legend(title = 'Users Rated',
+                                    title.position = 'top'))+
+        facet_wrap(decade ~.,
+                   ncol = 3)
+
+```
+
+# Complexity Adjusted Ratings
+
+The geek ratings on BGG are highly influential, but they are heavily skewed towards complex games. This means that "normal people" will have a hard time using the games that are highly rated on BGG. If we look at the top 100 games on BGG, we can see that they tend to fall on the heavier side in terms of game complexity.
+
+```{r flextable for geekratings, warning=F}
+
+weight_deciles<-quantile(active_games$avgweight, probs = seq(0, 1, .1), na.rm=T) %>% 
+        as.vector() %>% 
+        unique()
+
+# set color functions
+weight_func<- function(x) {
+  
+#  breaks<-quantile(x, probs = seq(0, 1, .1), na.rm=T) %>% as.vector()
+  breaks = weight_deciles
+  colorRamp=colorRampPalette(c("deepskyblue1", "white", "red"))
+  col_palette <- colorRamp(length(breaks))
+  mycut <- cut(x, 
+    breaks = breaks,
+    include.lowest = TRUE, 
+    right=T,
+    label = FALSE)
+  col_palette[mycut]
+  
+}
+
+quant_func<- function(x) {
+  
+  breaks<-quantile(x, probs = seq(0, 1, .1), na.rm=T) %>% as.vector()
+ # breaks = weight_deciles
+  colorRamp=colorRampPalette(c("deepskyblue1", "white", "red"))
+  col_palette <- colorRamp(length(breaks))
+  mycut <- cut(x, 
+    breaks = breaks,
+    include.lowest = TRUE, 
+    right=T,
+    label = FALSE)
+  col_palette[mycut]
+  
+}
+
+# get functions
+source(here::here("functions/baverage_func.R"))
+source(here::here("functions/average_func.R"))
+source(here::here("functions/avgweight_func.R"))
+
+# get top bgg games
+active_games %>%
+        mutate(date = as.Date(timestamp),
+               game_id = as.character(game_id),
+               name = abbreviate(name, minlength = 45)) %>%
+        select(date,
+               game_id, 
+               name, rank, baverage, avgweight) %>%
+        arrange(desc(baverage)) %>%
+        mutate_if(is.numeric, round, 2) %>%
+        rename(BGGRank = rank,
+               ID = game_id,
+               Game = name,
+               GeekRating = baverage,
+               Complexity = avgweight) %>%
+  select(date, ID, Game, BGGRank, GeekRating, Complexity) %>%
+        head(100) %>%
+        flextable() %>%
+        flextable::autofit() %>%
+        bg(j = c('Complexity'),
+           bg = avgweight_func) %>%
+  bg(j = c("GeekRating"),
+     bg = baverage_func)
+```
+
+We want a list of games that isn't so heavily skewed towards complexity. We want to "control for" the influence of complexity on the rating. That is, if we take the variation in the average ratings that isn't explained by complexity, which games still have high ratings? 
+
+## Fitting a Simple Regression
+
+To do this, wwe need the *residuals* from a regression of average rating on complexity - these will be the variation in game ratings that are *not explained* by complexity. We will fit the model and inspect the results.
+
+```{r regress rating on weight, warning=F, message=F}
+
+# fit model
+complexity_model<-active_games %>%
+        filter(!is.na(avgweight)) %>%
+        filter(!is.na(baverage)) %>%
+        nest() %>%
+        mutate(model = map(data, ~ lm(average ~ avgweight,
+                                                    data = .x))) %>%
+        mutate(tidied = map(model, tidy, se="robust", conf.int=T)) %>%
+        mutate(augmented = map(model, augment)) %>%
+        mutate(glanced = map(model, glance))
+
+# look at coefficient
+complexity_model %>%
+        select(tidied) %>%
+        unnest() %>%
+        mutate_if(is.numeric, round, 3) %>%
+  flextable() %>%
+  flextable::autofit()
+
+# look at model fit
+complexity_model %>%
+        select(glanced) %>%
+        unnest() %>%
+        mutate_if(is.numeric, round, 2) %>%
+  gather() %>%
+  flextable() %>%
+  flextable::autofit()
+
+```
+
+The intercept indicates the average rating of a game with a complexity of 0, which is kind of nonsensical. The coefficient indicates the effect of a unit increase in the complexity of a game on the average rating. Putting these two together tells us that a game with a complexity rating of 1 would have a rating of `r round(predict(complexity_model$model[[1]], newdata = data.frame(avgweight = 1), se=T) %>% as.data.frame() %>% pull(fit),2)`. A game with a complexity rating of 5, meanwhile, would have a weight of `r round(predict(complexity_model$model[[1]], newdata = data.frame(avgweight = 5), se=T) %>% as.data.frame() %>% pull(fit),2)`.
+
+The model indicates that the complexity of a game explains about 26% of the variation in average ratings (R-squared, which simply is the correlation coefficient (R) we saw earlier squared). So it's not the only thing that matters, but it has a pretty sizeable impact on the average rating and the corresponding geek rating.
+
+We don't really care about the model per se, we just want to get the residuals.
+
+```{r get the residuals, warning=F, message=F}
+
+# histogram
+complexity_model %>%
+        select(augmented) %>%
+        unnest() %>%
+        ggplot(., aes(x=.resid))+
+        geom_histogram(bins=50)+
+        theme_phil()
+
+# look at individual residuals
+complexity_model %>%
+        select(data, augmented) %>%
+        unnest() %>%
+        select(yearpublished, game_id, name, usersrated, average, .resid, avgweight) %>%
+        ggplot(., aes(x=avgweight, y=.resid)) +
+        geom_point(alpha = 0.25)+
+        theme_phil()+
+        geom_smooth(method = "lm",
+                    formula = 'y ~ x',
+                    col = "red")+
+        xlab("Game Complexity")+
+        ylab("Residual")
+```
+
+A positive residual in this case is a game that has a higher than expected average given its complexity. But, we can't just adjust the ratings alone because it skews heavily towards games that have a highly inflated average rating due to a only having a handful of users. 
+
+```{r use residual to get adjusted ratings, warning= F, message=F}
+
+# adjusted ratings
+complexity_model %>%
+        select(data, augmented) %>%
+        unnest() %>%
+        select(yearpublished, game_id, name, usersrated, average, baverage, .resid, avgweight) %>%
+        mutate(adj_average = .resid + mean(average, na.rm=T)) %>%
+        arrange(desc(adj_average)) %>%
+        mutate_if(is.numeric, round, 2) %>%
+  head(25) %>%
+  flextable() %>%
+  flextable::autofit()
+
+```
+
+We will adjust this using an approach similar to their Bayesian averaging methodology, adding 1000 ratings at the average of 5.5
+
+```{r adjusted averages, warning=F, message=F}
+
+# adjusted bayesian 
+complexity_adjusted_ratings <- complexity_model %>%
+        select(data, augmented) %>%
+        unnest() %>%
+        mutate(adj_average = .resid + mean(average, na.rm=T)) %>%
+        mutate(adj_baverage = ((usersrated*adj_average) + (5.5*1000)) / (usersrated + 1000)) %>%
+        arrange(desc(adj_baverage)) %>%
+        mutate(adj_rank = row_number(),
+               date = as.Date(timestamp),
+               game_id = as.character(game_id))
+```
+
+## Examining the Top Complexity-Adjusted Games
+
+We can put this all together to now look at games that are rated highly after adjusting for the effect of complexity. We'll look at the top 250 to keep it simple.
+
+```{r examining the output for complexity adjusted ratings, warning=F, message=F}
+
+# make flextable
+complexity_adjusted_ratings %>%
+        mutate(name = abbreviate(name, minlength = 45)) %>%
+        mutate_if(is.numeric, round, 2) %>%
+        rename(AdjustedRating = adj_baverage,
+               Game = name,
+               ID = game_id,
+               Complexity = avgweight,
+               AdjustedRank = adj_rank,
+               GeekRating = baverage,
+               GeekRank = rank) %>%
+  mutate(date = as.character(date)) %>%
+  select(date, ID, Game, GeekRank, AdjustedRank, GeekRating, AdjustedRating, Complexity) %>%
+  head(250) %>%
+        flextable() %>%
+        flextable::autofit() %>%
+        bg(j = c('Complexity'),
+           bg = avgweight_func) 
+
+```
+
+This gets us a list of games that is wildly different than before, and it's a list of games that are much more palatable to "normal people". In my mind, Crokinole taking the top spot makes a ton of sense and I will die on this hill.
+
+## Comparing Geek and Complexity Adjusted Ratings
+
+Which games have moved up and down the most? We can look at the difference between the BGG Rank and the Complexity adjusted ranks.
+
+```{r compare adjusted to bgg, fig.height=8, fig.width=10, warning=F, message=F}
+
+# no labels
+complexity_adjusted_ratings %>%
+        mutate(rating_diff = adj_average - baverage) %>%
+        ggplot(., aes(x=baverage,
+                      adj_baverage,
+                      label = abbreviate(name, minlength=40),
+                      color = rating_diff))+
+        geom_point(alpha=0.5)+
+  geom_text(vjust = -0.5,
+            size = 3,
+            check_overlap=T)+
+        # geom_text_repel(max.overlaps = 100,
+        #                 size = 2)+
+        # geom_text(check_overlap = T,
+        #           size=2)+
+        theme_phil()+
+        theme(legend.title = element_text())+
+        scale_color_gradient2_tableau(palette = 'Red-Blue Diverging',
+                                      limits = c(-0.5, 0.5),
+                                      oob = scales::squish)+
+        guides(color = guide_colorbar(title = "Difference in Rating",
+                                      title.position = "top",
+                                      barheight=0.5,
+                                      barwidth=10))+
+        xlab("Geek Rating")+
+        ylab("Adjusted Rating")
+```
+
+We want to focus in on the games that see a positive and negative shift in particular. Let's look at the games that are penalized the most.
+
+```{r look at top and bottom movment, warning=F, message=F}
+
+diff_percentiles<-complexity_adjusted_ratings %>% 
+        mutate(rating_diff = adj_baverage - baverage) %$% 
+        rating_diff %>% 
+        quantile(., prob = seq(0, 1, .1)) %>%
+        as.vector() 
+
+# set color functions
+diff_func<- function(x) {
+  
+#  breaks<-quantile(x, probs = seq(0, 1, .1), na.rm=T) %>% as.vector()
+  breaks = c(diff_percentiles, Inf)
+  colorRamp=colorRampPalette(c("red", "white", "deepskyblue1"))
+  col_palette <- colorRamp(length(breaks))
+  mycut <- cut(x, 
+    breaks = breaks,
+    include.lowest = TRUE, 
+    right=T,
+    label = FALSE)
+  col_palette[mycut]
+  
+}
+
+# flextable for most penalized games
+complexity_adjusted_ratings %>%
+        mutate(rank_diff = rank-adj_rank) %>%
+        mutate(rating_diff = adj_baverage - baverage) %>%
+        arrange(rating_diff) %>%
+        mutate(name = abbreviate(name, minlength = 40)) %>%
+        mutate_if(is.numeric, round, 2) %>%
+        rename(AdjustedRating = adj_baverage,
+               Complexity = avgweight,
+               AdjustedRank = adj_rank,
+               GeekRating = baverage,
+               BGGRank = rank,
+               Difference = rating_diff) %>%
+        select(date, name, GeekRating, AdjustedRating,  Difference) %>%
+        head(50) %>%
+        flextable() %>%
+        flextable::autofit() %>%
+        bg(j = c("Difference"),
+           bg = diff_func)
+
+```
+
+This list makes a lot of sense to me - the ratings themselves are still pretty good for some of these games, but these are all very, very heavy games. A lot of Vital Lacerda showing up in here, which to me epitomizes the disconnect between Geek Ratings and 'ratings for people who fun games'. The former is heavily slanted towards people who relish complexity, whereas the latter is slanted towards games that provide heavy bang for their buck in terms of their weight.
+
+The list of games that go up the most is on the other hand very light, party games. Even with the boost from being simple, many of these games still aren't rated that highly, though some notable ones (Monikers, MicroMacro, KLASK, Just One) end up near the top of the overall list. 
+
+```{r look at games that go up the most, warning=F, message=F}
+
+# flextable for most improved games
+complexity_adjusted_ratings %>%
+        mutate(rank_diff = rank-adj_rank) %>%
+        mutate(rating_diff = adj_baverage - baverage) %>%
+        arrange(desc(rating_diff)) %>%
+        mutate(name = abbreviate(name, minlength = 40)) %>%
+        mutate_if(is.numeric, round, 2) %>%
+        rename(AdjustedRating = adj_baverage,
+               Complexity = avgweight,
+               AdjustedRank = adj_rank,
+               GeekRating = baverage,
+               BGGRank = rank,
+               Difference = rating_diff) %>%
+        select(date, name, GeekRating, AdjustedRating,  Difference) %>%
+        head(50) %>%
+        flextable() %>%
+        flextable::autofit() %>%
+        bg(j = c("Difference"),
+           bg = diff_func)
+
+```
+
+## Movement within BGG Top 100
+
+Let's restrict to games inside the BGG Top 100 and see how these games are affected.
+
+```{r diff inside top 250, warning=F, message=F}
+
+rank_diff_func<-function(x) {
+#  breaks<-quantile(x, probs = seq(0, 1, .1), na.rm=T) %>% as.vector()
+  breaks = c(-Inf,-100,-50,  -25, -10, -5, 0, 5, 25, 50, 100,  Inf)
+  colorRamp=colorRampPalette(c("red", "white", "deepskyblue1"))
+  col_palette <- colorRamp(length(breaks))
+  mycut <- cut(x, 
+    breaks = breaks,
+    include.lowest = TRUE, 
+    right=T,
+    label = FALSE)
+  col_palette[mycut]
+  
+}
+
+# flextable for most penalized games
+complexity_adjusted_ratings %>%
+        filter(rank <= 100) %>%
+        mutate(rank_diff = rank-adj_rank) %>%
+        mutate(rating_diff = adj_baverage - baverage) %>%
+        mutate(name = abbreviate(name, minlength = 40)) %>%
+        mutate_if(is.numeric, round, 2) %>%
+        rename(AdjustedRating = adj_baverage,
+               Complexity = avgweight,
+               AdjustedRank = adj_rank,
+               GeekRank = rank,
+               Difference = rank_diff) %>%
+        select(date, name, GeekRank, AdjustedRank,  Difference) %>%
+        arrange(GeekRank) %>%
+        flextable() %>%
+        flextable::autofit() %>%
+        bg(j = c("Difference"),
+           bg = rank_diff_func)
+```
+
+It's important to remember that this is meant to be a ranking list for someone who sees complexity as a negative moreso than a positive. Terra Mystica and Gaia Project might be great games for someone like me who is into the hobby, but would it rank highly for someone who isn't that keen on games? Probably not.
+
+# Complexity and BGG Ratings over Time
+
+How has the relationship been complexity and average rating changed over time? 
+
+## Complexity and the Average Rating
+
+We can plot complexity versus the average BGG rating by every year since 1970.
+
+```{r scatterplot of relationship over time, warning=F, message=F, fig.height=10}
+
+active_games %>%
+  filter(yearpublished >1970) %>%
+  filter(yearpublished < 2021) %>%
+  ggplot(., aes(x=avgweight,
+                y=average))+
+  geom_point()+
+  geom_smooth(method = "lm",
+              formula = "y ~ x")+
+  facet_wrap(yearpublished~.)+
+  theme_phil()+
+  xlab("Complexity")+
+  ylab("Average Rating")
+
+```
+
+Or, alternatively, let's make one plot but then color the year.
+
+```{r scatterplot of relationship over time no facet, warning=F, message=F, fig.height=10}
+
+active_games %>%
+  filter(yearpublished >1970) %>%
+  filter(yearpublished < 2021) %>%
+  ggplot(., aes(x=avgweight,
+                color = as.factor(yearpublished),
+                y=average))+
+  geom_jitter()+
+  geom_smooth(method = "lm",
+              se=F,
+              show.legend = F,
+              formula = "y ~ x")+
+  theme_phil()+
+  xlab("Complexity")+
+  ylab("Average Rating")+
+  scale_color_viridis_d()
+
+
+```
+
+We can fit the same model to each individual year to see the relationship between complexity and rating has changed by the year the game is published. We'll plot the coefficient from a linear model fit to each year.
+
+```{r filter and then fit by year, warning=F, message=F}
+
+# fit by year
+complexity_by_year<-active_games %>%
+  filter(yearpublished >= 1970) %>%
+  nest(-yearpublished) %>%
+        mutate(model = map(data, ~ lm(average ~ avgweight,
+                                                    data = .x))) %>%
+        mutate(tidied = map(model, tidy, se="robust", conf.int=T)) %>%
+        mutate(augmented = map(model, augment)) %>%
+        mutate(glanced = map(model, glance))
+
+# extract coefficient 
+complexity_by_year %>%
+  select(yearpublished, glanced, tidied) %>%
+  filter(yearpublished < 2021) %>%
+  unnest(tidied, glanced) %>%
+  arrange(yearpublished) %>%
+  filter(term == 'avgweight') %>%
+  select(yearpublished, r.squared, estimate, conf.low, conf.high) %>%
+  mutate(date = as.Date(paste(yearpublished, "01", "01", sep="-"))) %>%
+  ggplot(., aes(x=date,
+                y=estimate, 
+                ymin = conf.low,
+                max = conf.high))+
+  geom_pointrange()+
+  scale_x_date()+
+  theme_phil()+
+  xlab("Year Game Published")+
+  ylab("Effect of Complexity on Average Rating")+
+  coord_cartesian(ylim = c(0, NA))
+
+```
+We can similarly examine the strength of this relationship over time by plotting the variation explained by complexity in each year (the R squared)
+
+```{r rsquared by year, warning=F, message=F}
+
+# Rsquared
+complexity_by_year %>%
+  select(yearpublished, glanced, tidied) %>%
+  filter(yearpublished <=2021) %>%
+  unnest(tidied, glanced) %>%
+  arrange(yearpublished) %>%
+  filter(term == 'avgweight') %>%
+  select(yearpublished, r.squared, estimate, conf.low, conf.high) %>%
+  mutate(date = as.Date(paste(yearpublished, "01", "01", sep="-"))) %>%
+  ggplot(., aes(x=date,
+                y=r.squared))+
+  geom_point()+
+  geom_line()+
+  geom_smooth(formula = 'y ~ x',
+              method = 'loess')+
+  scale_x_date()+
+  theme_phil()+
+  xlab("Year Game Published")+
+  ylab("Variation in Average Rating \n Explained by Complexity \n (R-squared)")+
+  coord_cartesian(ylim = c(0, NA))
+
+```
+
+If I'm thinking about this correctly, this would mean that complexity has mostly had the same impact on the Average Rating over time, though post 2000 we might be seeing a decrease in the effect of complexity. Now I'd imagine that that is because we see newer games with relatively few votes that get a pretty high average rating even if they aren't all that complex. 
+
+## Complexity and the Geek Rating over Time
+
+What if we look at the effect of complexity on the geek rating?
+
+```{r complexity on the geek rating, warning=F, message=F, fig.height=10}
+
+active_games %>%
+  filter(yearpublished >1970) %>%
+  filter(yearpublished < 2021) %>%
+  ggplot(., aes(x=avgweight,
+                y=baverage))+
+  geom_point()+
+  geom_smooth(method = "lm",
+              formula = 'y ~ x')+
+  facet_wrap(yearpublished~.)+
+  theme_phil()
+
+```
+
+We'll follow the same methodology as before, now fitting a regression of the average and geek rating as a function of game complexity by publishing year. But we'll also fit a model for the effect of complexity on the number of user ratings. We'll then plot the coefficients over time.
+
+```{r fit a model to the effect of complexity on bgg ratings, warning = F, message=F}
+
+# fit by year
+complexity_bgg_by_year<-active_games %>%
+  filter(yearpublished >= 1970) %>%
+  nest(-yearpublished) %>%
+        mutate(model = map(data, ~ lm(baverage ~ avgweight,
+                                                    data = .x))) %>%
+        mutate(tidied = map(model, tidy, se="robust", conf.int=T)) %>%
+        mutate(augmented = map(model, augment)) %>%
+        mutate(glanced = map(model, glance)) %>%
+  mutate(outcome = "baverage") %>%
+  bind_rows(.,
+            active_games %>%
+              filter(yearpublished >= 1970) %>%
+              nest(-yearpublished) %>%
+              mutate(model = map(data, ~ lm(log(usersrated) ~ avgweight,
+                                                    data = .x))) %>%
+              mutate(tidied = map(model, tidy, se="robust", conf.int=T)) %>%
+              mutate(augmented = map(model, augment)) %>%
+              mutate(glanced = map(model, glance)) %>%
+              mutate(outcome = "usersrated (logged)")) %>%
+    bind_rows(.,
+            active_games %>%
+              filter(yearpublished >= 1970) %>%
+              nest(-yearpublished) %>%
+              mutate(model = map(data, ~ lm(average ~ avgweight,
+                                                    data = .x))) %>%
+              mutate(tidied = map(model, tidy, se="robust", conf.int=T)) %>%
+              mutate(augmented = map(model, augment)) %>%
+              mutate(glanced = map(model, glance)) %>%
+              mutate(outcome = "average"))
+
+
+# extract coefficient s
+complexity_bgg_by_year %>%
+  select(outcome, yearpublished, glanced, tidied) %>%
+  filter(yearpublished < 2021) %>%
+  unnest(tidied, glanced) %>%
+  arrange(yearpublished) %>%
+  filter(term == 'avgweight') %>%
+  select(outcome, yearpublished, r.squared, estimate, conf.low, conf.high) %>%
+  mutate(date = as.Date(paste(yearpublished, "01", "01", sep="-"))) %>%
+  ggplot(., aes(x=date,
+                y=estimate, 
+                color = outcome,
+                ymin = conf.low,
+                max = conf.high))+
+  geom_pointrange()+
+  scale_x_date()+
+  theme_phil()+
+  xlab("Year Game Published")+
+  ylab("Effect of Complexity")+
+  geom_hline(yintercept = 0,
+             linetype = 'dashed')+
+  scale_color_colorblind()
+
+# # Rsquared
+# complexity_bgg_by_year %>%
+#   select(yearpublished, glanced, tidied) %>%
+#   filter(yearpublished < 2021) %>%
+#   unnest(tidied, glanced) %>%
+#   arrange(yearpublished) %>%
+#   filter(term == 'avgweight') %>%
+#   select(yearpublished, r.squared, estimate, conf.low, conf.high) %>%
+#   mutate(date = as.Date(paste(yearpublished, "01", "01", sep="-"))) %>%
+#   ggplot(., aes(x=date,
+#                 y=r.squared))+
+#   geom_point()+
+#   geom_line()+
+#   geom_smooth(formula = 'y ~ x',
+#               method = 'loess')+
+#   scale_x_date()+
+#   theme_phil()+
+#   xlab("Year Game Published")+
+#   ylab("Variation in Geek Rating \n Explained by Complexity \n (R-squared)")
+  
+```
+
+Okay so this pretty much explains what's going on with the skew towards complex and recently published games in the geek ratings.
+
+It's not that complexity games are getting higher ratings over time, it's that **complex games are attracting a larger share of the user ratings**, particularly since the early 2000s. I would imagine that as the marketplace has become more and more crowded with games, the boardgamegeek community has started to consolidate around more complex games that emerge as the cream of the crop. Complex games get purchased more, attract more user ratings, and end up shooting up the Geek list.
+
+# Adjusting for "The Hotness" in BGG Ratings
+
+The list of complexity adjusted games is pretty great for recommending games to a beginner, but it's not as helpful for people who have been in the hobby longer. If you *do* like more complex games, what list should you look at? The Geek list as it currently stands is still probably good, but its not without its problems.
+
+The Geek Ratings are heavily skewed towards games that have been released in recent years: all of the top 10 games were released after 2015, and only 5 of the top 50 were released prior to 2010. Either we truly seeing the pinnacle of game design in the last 10 years (this is possible), or it means that the BGG users have a tendency to seek out and rate the hotness, which skews the list towards recent games. 
+
+```{r show the hotness effect on bgg ratings}
+
+active_games %>%
+  arrange(rank) %>%
+  mutate(date = as.Date(timestamp)) %>%
+  select(date, name, rank, baverage, yearpublished) %>%
+  mutate(yearpublished = as.character(yearpublished)) %>%
+  rename(Date = date,
+         Name = name,
+         BGGRank = rank,
+         BGGRating = baverage,
+         YearPublished = yearpublished) %>%
+  select(Date, Name, YearPublished, BGGRank, BGGRating) %>%
+  mutate_if(is.numeric, round, 2) %>%
+  head(50) %>%
+  flextable() %>%
+  flextable::autofit() %>%
+  bg(., i = ~ (YearPublished %in% seq(2010, 2015, 1)),
+     bg = 'grey90') %>%
+    bg(., i = ~ (YearPublished %in% seq(2015, 2018, 1)),
+     bg = 'grey80') %>%
+      bg(., i = ~ (YearPublished %in% seq(2019, 2020, 1)),
+     bg = 'grey70')
+
+```
+
+Why do newer games so quickly climb the geek list? This is basically due to the fact that BGG uses 1000 votes to start its Bayesian average. This was probably a good prior for when board games had a much smaller audience, but as BGG and the hobby has grown, **newer games rapidly attract enough user ratings that they manage to quickly overtake this prior**.
+
+If we plot the average and median user ratings for games published in each year, we can see how more recently published games draw lots of user ratings (though this does start to taper off for games in the last 1-2 years, though we would expect this to go up as these games accumulate user ratings).
+
+```{r plot average user ratings by year}
+
+active_games %>%
+  filter(yearpublished>=1970) %>%
+  filter(yearpublished< 2019) %>%
+  group_by(yearpublished) %>%
+  summarize(median_users = median(usersrated),
+            average_users = mean(usersrated)) %>%
+  mutate(date = as.Date(paste(yearpublished, "01", "01", sep="-"))) %>%
+  melt(id.vars=c("date", "yearpublished")) %>%
+  ggplot(., aes(x=date, y=value))+
+  geom_point()+
+  geom_line()+
+  theme_phil()+
+  facet_wrap(variable~.,
+             ncol = 1,
+             scales="free_y")+
+  xlab("Year Published")
+
+```
+
+This isn't a problem per se, but it does mean that two games might actually be pretty similar in quality, but the one released more recently draws lots of user ratings, and so it gets a big boost to its rating on the Geek list.
+
+## Varying the Number of Baseline Votes
+
+Fortunately for us, we can adjust for this in a pretty simple way by upping the number of baseline 5.5 votes for every single game. Rather than using the 1000 or so that BGG uses, we'll toggle the number of baseline ratings at various thresholds up to 100,000 votes and see how the rankings start to change. Games that maintain a high ranking at each threshold will be games that have both a large number of user ratings and a high average. Games that are sensitive to the number of baseline user ratings will be ones that are 'inflated' in the current ranking system.
+
+```{r adjust the number of games, warning=F} 
+
+votes_added<-c(1000, 2000, 5000, 10000, 25000, 50000, 100000)
+
+votes_added_df<-foreach(i = 1:length(votes_added), .combine=rbind.data.frame) %do% {
+  
+  active_games %>%
+  arrange(rank) %>%
+  mutate(date = as.Date(timestamp)) %>%
+  mutate(yearpublished = as.character(yearpublished)) %>%
+  mutate(tadj_baverage = ((usersrated*average) + (5.5*votes_added[i])) / (usersrated + votes_added[i])) %>%
+  arrange(desc(tadj_baverage)) %>%
+  select(game_id, date, usersrated, name, rank, baverage, yearpublished, tadj_baverage) %>%
+  mutate(VotesAdded = votes_added[i]) %>%
+  select(date, usersrated, game_id, name, tadj_baverage, VotesAdded, yearpublished)
+  
+}
+
+# get results
+votes_added_games<-votes_added_df %>%
+  group_by(VotesAdded) %>%
+  arrange(desc(tadj_baverage)) %>%
+  mutate(rank = row_number()) %>%
+  group_by(game_id) %>%
+  select(-tadj_baverage) %>%
+  mutate(avg_rank = mean(rank),
+         sd_rank = sd(rank),
+         VotesAdded = paste("votes", VotesAdded, sep="_")) %>%
+  ungroup() %>%
+  pivot_wider(names_from = c("VotesAdded"),
+              values_from = c("rank"),
+              id_cols = c("date", "game_id", "name", "usersrated", "yearpublished", "avg_rank", "sd_rank")) %>%
+  unnest() %>%
+  mutate_if(is.numeric, round, 1) %>%
+  arrange(avg_rank) %>%
+  mutate(rank = row_number())
+
+# set color functions
+ranking_func<- function(x) {
+  
+#  breaks<-quantile(x, probs = seq(0, 1, .1), na.rm=T) %>% as.vector()
+  breaks = c(1, 5, 10, 25, 50, 75, 100, 150, 250, 500, Inf)
+  colorRamp=colorRampPalette(c("deepskyblue1", "white", "red"))
+  col_palette <- colorRamp(length(breaks))
+  mycut <- cut(x, 
+    breaks = breaks,
+    include.lowest = TRUE, 
+    right=T,
+    label = FALSE)
+  col_palette[mycut]
+  
+}
+
+# flextable
+votes_added_games %>%
+  rename(ID = game_id,
+         Name = name,
+         YearPublished = yearpublished,
+         UsersRated = usersrated,
+         Average = avg_rank,
+         SD = sd_rank,
+         Rank = rank,
+         `1k` = votes_1000,
+         `2k` = votes_2000,
+         `5k` = votes_5000,
+         `10k` = votes_10000,
+         `25k` = votes_25000,
+         `50k` = votes_50000,
+         `100k` = votes_100000) %>%
+  select(Name, YearPublished, Rank, Average, `1k`, `2k`, `5k`, `10k`, `25k`, `50k`, `100k`) %>%
+  head(100) %>%
+  flextable() %>%
+  flextable::autofit() %>%
+  bg(j = c("1k",
+           "2k",
+           "5k",
+           "10k",
+           "25k",
+           "50k",
+           "100k"),
+           bg = ranking_func) %>%
+    add_header_row(values = c("",
+                             "",
+                             "",
+                             "",
+                            "# User Votes Added",
+                            "# User Votes Added",
+                            "# User Votes Added", 
+                            "# User Votes Added",
+                            "# User Votes Added",
+                            "# User Votes Added",
+                            "# User Votes Added")) %>%
+      add_header_row(values = c("",
+                             "",
+                             "",
+                            "",
+                            "Game Ranking",
+                            "Game Ranking",
+                            "Game Ranking", 
+                            "Game Ranking",
+                            "Game Ranking",
+                            "Game Ranking",
+                            "Game Ranking")) %>%
+    # add_header_row(values = rep("Whitespace Client Probabilities",
+    #                           6)) %>%
+    flextable::align(align = "center", part = "header") %>%
+    merge_h(part = "header") %>%
+    merge_v(part = "header")
+
+```
+
+What do we find? There's no getting around the fact that Gloomhaven is going to be a top game, it has an extremely high average with a lot of votes. The same goes for Terraforming Mars, which has an extremely high number of user ratings with a high average - if we set the number of baseline votes over 25k Terraforming Mars becomes the top game of all time.
+
+There's no *correct* number of votes to add, but it is interesting to see how games are affected by having more votes. If we add 100k votes we basically end up with a list that penalizes recent games to enter the top 100 (Gloomhaven Jaws of the Lion, Marvel Champions, Rising Sun, Underwater Cities, Dune Imperium) and provides a boost to some of the pillars of the board game renaissance Pandemic, Ticket to Ride, Pandemic, 7 Wonders, Puerto Rico, Agricola. Man, evidently Terraforming Mars is really good?
+
+## Top Board Games with 100k Votes Added
+
+```{r look at top 10 by various thresholds}
+
+votes_added_games %>%
+  rename(ID = game_id,
+         Name = name,
+         YearPublished = yearpublished,
+         UsersRated = usersrated,
+         Average = avg_rank,
+         SD = sd_rank,
+         Rank = rank,
+         `1k` = votes_1000,
+         `2k` = votes_2000,
+         `5k` = votes_5000,
+         `10k` = votes_10000,
+         `25k` = votes_25000,
+         `50k` = votes_50000,
+         `100k` = votes_100000) %>%
+  select(Name, YearPublished, Rank, Average, `1k`,`2k`, `5k`, `10k`, `25k`, `50k`, `100k`) %>%
+  arrange(`100k`) %>%
+  head(100) %>%
+  flextable() %>%
+  flextable::autofit() %>%
+  bg(j = c("1k",
+           "2k",
+           "5k",
+           "10k",
+           "25k",
+           "50k",
+           "100k"),
+           bg = ranking_func) %>%
+    add_header_row(values = c("",
+                             "",
+                             "",
+                             "",
+                            "# User Votes Added",
+                            "# User Votes Added", 
+                            "# User Votes Added",
+                            "# User Votes Added", 
+                            "# User Votes Added",
+                            "# User Votes Added",
+                            "# User Votes Added")) %>%
+      add_header_row(values = c("",
+                             "",
+                             "",
+                            "",
+                            "Game Ranking",
+                            "Game Ranking", 
+                            "Game Ranking",
+                            "Game Ranking",
+                            "Game Ranking",
+                            "Game Ranking",
+                            "Game Ranking")) %>%
+    # add_header_row(values = rep("Whitespace Client Probabilities",
+    #                           6)) %>%
+    flextable::align(align = "center", part = "header") %>%
+    merge_h(part = "header") %>%
+    merge_v(part = "header")
+
+```
+
+Adding 100k votes gives us the list of games that more or less maps to the evergreen games of the last two decades, and actually shows a decent balance of complex and simple games. I would argue that is is a stronger list to look at for people who are interested in the hobby but aren't necessarily going to be interested in chasing the hotness.
+
+We'll store these lists on Github for everyone else to use.
+
+```{r amend df to fields we want}
+
+votes_added_ratings_out<-votes_added_games %>%
+  select(-usersrated, -yearpublished, -rank)
+
+complexity_adjusted_ratings_out<- complexity_adjusted_ratings %>%
+  select(date, game_id, name, adj_baverage)
+
+adjusted_ratings<-complexity_adjusted_ratings_out %>%
+   mutate(game_id = as.numeric(game_id)) %>%
+   left_join(., votes_added_ratings_out %>%
+               rename(avg_vote_rank = avg_rank) %>%
+               select(-sd_rank),
+             by = c("date", "game_id", "name"))
+
+# ratings
+fwrite(adjusted_ratings,
+      file = here::here("adjusted_bgg_ratings/data", paste(Sys.Date(),".csv", sep="")))
+
+# # model
+# readr::write_rds(complexity_model,
+#                  file = here::here("adjusted_bgg_ratings/models", paste("adjusted_bgg_ratings_model_", Sys.Date(), ".Rdata", sep="")))
+
+```
