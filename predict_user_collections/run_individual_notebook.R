@@ -30,7 +30,7 @@ foreach(i=1:length(user_list)) %do% {
                           output_file =  paste(user_list[i],
                                                year_end,
                                                sep = "_"),
-                          output_dir = here::here("predict_user_collections/individual_reports"))
+                          output_dir = here::here("predict_user_collections/user_reports"))
 }
 
 # create function for looping over specified user list and creating reports
