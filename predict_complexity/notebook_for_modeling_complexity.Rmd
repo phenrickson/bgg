@@ -5,7 +5,7 @@ date: "`r Sys.Date()`"
 output: 
   html_document:
         toc: true
-        toc_depth: 3
+        toc_depth: 2
         number_sections: true
 params:
   end_training_year: 2019
@@ -42,7 +42,7 @@ set_flextable_defaults(theme_fun = theme_alafoli,
 ```
 
 
-# What is this analysis? {-}
+# What is this Analysis? {-}
 
 This notebook is for estimating the community rating for complexity for games on boardgamegeek.  One of the key features in predicting a game's average rating or geek rating is its avgweight - complexity. However, this feature is itself voted on by the community, so it is observed at the same time as its overall rating. A game's complexity rating tends to settle pretty quickly, but for upcoming games in which there are relatively few votes, we would prefer to estimate its complexity rather than rely on its vote.
 
@@ -460,7 +460,7 @@ data_inspection %>%
 
 What designers typically have the most complexity (and which designers have the most variation)? Notice Vlaada's super wide distribution, ha.
 
-```{r designers complexity, fig.height=12, fig.width=10, warning=F, message=F}
+```{r designers complexity, fig.height=15, fig.width=10, warning=F, message=F}
 
 min_games = 10
 
@@ -517,7 +517,7 @@ rm(min_games)
 
 Let's look at complexity by publisher.
 
-```{r publishers complexity, fig.height=20, fig.width=10, warning=F, message=F}
+```{r publishers complexity, fig.height=25, fig.width=10, warning=F, message=F}
 
 # list of publishers i have previously flagged as okay
 publisher_list = 
@@ -561,7 +561,7 @@ data_inspection %>%
 
 I imagine for artists it's basically just which publishers they work with?
 
-```{r plot artists, warning=F, message=F, fig.height=9, fig.width=10}
+```{r plot artists, warning=F, message=F, fig.height=20, fig.width=10}
 
 min_games = 10
 
