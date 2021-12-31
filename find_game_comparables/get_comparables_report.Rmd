@@ -1,0 +1,388 @@
+---
+title: "Finding Similar Board Games"
+author: "Phil Henrickson"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+        toc: true
+        toc_depth: 3
+params:
+  id: 139443
+---
+
+```{r global settings, echo=F, warning=F, message=F, results = 'hide'}
+
+knitr::opts_chunk$set(echo = F,
+                      error=F,
+                      dev="png",
+                      fig.width = 9,
+                      fig.height = 6)
+
+options(knitr.duplicate.label = "allow")
+
+options(scipen=999)
+
+source(here::here("scripts/load_packages.R"))
+source(here::here("functions/theme_phil.R"))
+library(plumber)
+rm(a)
+
+```
+
+```{r flextable settings, results = 'hide', echo=F, warning=F, message=F}
+
+#library(webshot2)
+library(flextable)
+library(kableExtra)
+library(cowplot)
+library(magick)
+library(gt)
+
+set_flextable_defaults(theme_fun = theme_alafoli,
+                       font.color = "black",
+  padding.bottom = 6, 
+  padding.top = 6,
+  padding.left = 6,
+  padding.right = 6,
+  background.color = "white")
+
+```
+
+```{r load functions, warning=F, message=F, results = 'hide'}
+
+# function for loading game by id
+source(here::here("functions/get_game_comparables.R"))
+
+# function for loading game record
+source(here::here("functions/get_game_record.R"))
+
+# rename func
+source(here::here("functions/rename_func.R"))
+
+# get record
+suppressMessages({
+        record = get_game_record(params$id)
+})
+
+```
+
+## What is this analysis?
+
+This notebook is for selecting any boardgame and identifying **its most comparable games using data from boardgamegeek.com**. I use a dimension reduction method (PCA) to learn the main points of variation in data about games from boardgamegee - this gives me a vector with every game's value on each of the principal components. To find similar games, I compute the distance between all games using the first ten principal components. I use the distance between games to determine their overall similarity. Games that are close to each other are said to be *neighbors*.
+
+This document details a game's 25 nearest neighbors and illustrate some of the dimensions that make the selected game and its neighbors similar.
+
+## Game Profile: **`r paste(record$name[1])`**
+
+Summary information for the selected game. 
+
+```{r table of game info, fig.height=1.5, fig.width=10}
+
+game_info = record %>%
+      #  select(game_id, yearpublished, name) %>%
+        rename(ID = game_id,
+               Published = yearpublished,
+               Average = average,
+               UserRatings = usersrated,
+               GeekRating= baverage,
+               Complexity = avgweight,
+               Game = name) %>%
+  mutate(`Player Count` = paste(minplayers, maxplayers, sep="-"),
+         `Playing Time` = paste(as.character(playingtime), " min", sep="")) %>%
+  mutate_if(is.numeric, round, 2) %>%
+       # mutate_if(is.numeric, as.character) %>%
+  mutate(Published = as.character(Published),
+         ID = as.character(ID)) %>%
+        select(ID, Game, Published, `Player Count`, `Playing Time`, UserRatings, Average, GeekRating, Complexity)
+
+game_info %>%
+  flextable() %>%
+  flextable::autofit() 
+
+#%>%
+  #set_caption(paste("Game Profile for ", record$name[1], ". Data from boardgamegeek.com", sep=""))
+
+# game_info$Game = str_wrap(game_info$Game, 40)
+#   #       flextable() %>%
+#   #    #   flextable::autofit() %>% 
+#   #       bold(part = "all") %>%
+#   # as_raster()
+
+# t_game_info = tableGrob(game_info %>%
+#                           rename_all(toupper),
+#                         theme=ttheme_game, rows=NULL)
+
+# grid.arrange(t_game_info,
+#              ncol =1)
+
+# game_info %>%
+#   flextable() %>%
+#   flextable::align(align = "center", part = "all") %>%
+#   flextable::autofit() %>%
+#   bold(part = "all")
+
+             
+```
+
+Information on the game's designers, artists, mechanics and categories. Note: designer and artist features are not used in identifying nearest neighbors.
+
+```{r show game mechanics}
+
+publishers = record %>%
+        select(starts_with("pub_")) %>%
+        names() %>%
+        rename_func() %>%
+        as_tibble()
+
+designers = record %>%
+        select(starts_with("des_")) %>%
+        names() %>%
+        rename_func() %>%
+        as_tibble()
+
+artists = record %>%
+        select(starts_with("art_")) %>%
+        names() %>%
+        rename_func() %>%
+        gsub("Art ", "", .) %>%
+        as_tibble()
+
+mechanics = record %>%
+        select(starts_with("mech_")) %>%
+        names() %>%
+        rename_func() %>%
+        as_tibble()
+
+categories = record %>%
+        select(starts_with("cat_")) %>%
+        names() %>%
+        rename_func() %>%
+        as_tibble()
+
+# get maximum length
+max = max(c(nrow(publishers),
+            nrow(designers),
+            nrow(mechanics),
+            nrow(artists),
+            nrow(categories)))
+
+publisher_ft = publishers %>%
+        bind_rows(., 
+                  rep(NA, times =  max - nrow(publishers)+1) %>%
+                          as_tibble()) 
+
+designer_ft = designers %>%
+        bind_rows(., 
+                  rep(NA, times =  max - nrow(designers)+1) %>%
+                          as_tibble()) 
+
+artist_ft = artists %>%
+        bind_rows(., 
+                  rep(NA, times =  max - nrow(artists)+1) %>%
+                          as_tibble()) 
+        
+mech_ft = mechanics %>%
+        bind_rows(., 
+                  rep(NA, times =  max - nrow(mechanics)+1) %>%
+                          as_tibble())
+
+cat_ft = categories %>%
+        bind_rows(., 
+                  rep(NA, times =  max - nrow(categories)+1) %>%
+                          as_tibble())
+# combine to flextable
+cbind.data.frame(publisher_ft,
+                 designer_ft,
+                 artist_ft,
+                 cat_ft,
+                 mech_ft) %>%
+        set_names(., c("Publisher(s)", 
+                       "Designer(s)",
+                       "Artist(s)", 
+                       "Categories", 
+                       "Mechanics")) %>%
+        flextable() %>%
+        flextable::autofit()
+```
+
+For the full profile of the selected game, go to `r paste("https://boardgamegeek.com/boardgame/", params$id, sep="")`
+
+## Most Similar Games to **`r paste(record$name[1])`**
+
+The table below displays the most similar games to `r paste(record$name[1])` using data from boardgamegeek (BGG). The reported similarity score is the (squared) inverse of the Manhattan distance between two games. 
+
+**Note:** The analysis does not make use of a game's number of ratings, average, or geek average, but instead looks only at a game's categories, mechanics, playing time, player count, and complexity. The current approach for computing the distance weighs each component equally; I plan to explore a change to this in the future by using different measures of distance, as we would reasonably expect some components to be more important than others. I initially relied on Euclidean distance, but in tinkering with the results I have opted to go with the Manhattan distance for now.
+
+```{r comps and get for game, warning=F, message=F, results = 'hide'}
+
+comps = get_game_comparables(params$id)
+
+```
+
+```{r examine table}
+
+comps$neighbors_table
+
+```
+
+## Plotting Comparable Games to **`r paste(record$name[1])`**
+
+Placing the selected game and its nearest neighbors on the first two principal components.
+
+```{r examine pc plot, fig.height=8, fig.width=10, warning=F, message=F}
+
+comps$pc_plot+
+  theme(panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank())+
+  ylab("PC2_Thematic")+
+  xlab("PC1_Complexity")+
+  annotate("label",
+           x=-4.5,
+           y=10,
+          label = "Party/Deduction")+
+    annotate("label",
+           x=7,
+           y=10,
+          label=  "Thematic")+
+  annotate("label",
+           x =-5,
+           y = -3,
+         label =  "Family/Abstract")+
+    annotate("label",
+           x =2.5,
+           y = -5.5,
+         label =  "Euros")+
+  annotate("label",
+           x=11,
+           y = -3,
+        label = "Simulation/Wargame")+
+  ggtitle(paste("What type of game is ", record$name, "?", sep=""),
+          subtitle = str_wrap("Mapping all games on BGG by first two principal components of variation (complexity and theme), which identifies specific clusters of game types. The selected game and its nearest neighbors are highlighted to identify where they are placed in this mapping of games.", 125))
+
+```
+
+$$\\[0.05in]$$
+
+Placing games on the first four principal components, which I have found to loosely map to complexity, theme, economy, and cooperation.
+
+```{r examine nplot, fig.height=8, fig.width=10, warning=F, message=F}
+
+comps$neighbors_plot+
+                  annotate("label",
+                         x= 1,
+                         y=c(-5, 5.5),
+                         label = c("Simple", "Complex"))+
+                    annotate("label",
+                         x= 2,
+                         y=c(-4, 6),
+                         label = c("Abstract", "Storytelling"))+
+                      annotate("label",
+                         x= 3,
+                         y=c(-7, 5.5),
+                         label = c("Simulation", "Economic"))+
+                      annotate("label",
+                         x= 4,
+                         y=c(-8, 5),
+                         label = c("Conflict/Deception", "Cooperative"))+
+  xlab("")+
+  ylab("Z Score")
+
+```
+
+$$\\[0.05in]$$
+
+## Comparing Games on Principal Components
+
+The chart below shows how `r paste(record$name[1])` compares to its nearest neighbors on each of the ten principal components. Similar games will have similar profiles in terms of their placement on each dimension. This can be a useful way to easily see the dimensions on which games resemble each other.
+
+```{r tile plot, fig.height=8, fig.width=10, warning=F, message=F}
+
+comps$tile_plot +
+          theme(legend.title = element_text())+
+    scale_color_gradient2(low = "red", mid = "grey70", high = "blue4",
+                          midpoint = 0,
+                          limits = c(-5, 5),
+                          oob = scales::squish)+
+    scale_fill_gradient2(low = "red", mid = "grey70", high = "blue4",
+                          midpoint = 0,
+                          limits = c(-5, 5),
+                          oob = scales::squish)+
+        # scale_color_viridis(option="magma",
+        #                     limits = c(-5,5),
+        #                     oob = scales::squish)+
+        # scale_fill_viridis(option="magma",
+        #                    limits = c(-5,5),
+        #                    oob = scales::squish)+
+        guides(color = "none",
+               fill = guide_colorbar(barheight=0.5,
+                                     barwidth=10,
+                                     title = "Z Score",
+                            #    title = "              Z Score",
+                                     title.position = "top"))+
+    theme(legend.position = "top")+
+    xlab("")+
+    ylab("")+
+    theme(panel.grid.minor = element_blank(),
+          panel.grid.major = element_blank())+
+        ggtitle(paste("How are games similar to ", record$name[1], "?", sep=""),
+            subtitle = str_wrap("Placing selected game and its neighbors on each of the ten principal components. Similar games will have similar profiles across each of the components.", 125))
+
+```
+
+## Examining PCA Variable Loadings
+
+What explains a game's score on each principal component?
+
+To gain a better understanding of these principal components, we can look at the loadings for the variables in the dataset. These are the the contributions of each variable to the ten components used in computing the distance between games. Large loadings (either positive or negative) for a variable indicate that there is a strong relationship between that variable and the component.
+
+For instance, on the first principal component (PC1), **time per player**, **average weight**, and **playing time** have the highest positive loadings, while **party game** and **max players** have negative loadings. This indicates that this component seems to map to a game's complexity - longer, more complex games will have high positive scores on this component while simpler, shorter, party games with lots of players will have low scores. 
+
+```{r examine variable loadings, warning=F, message=F, fig.height=12, fig.width=10}
+
+unsupervised_neighbor_components = 
+        readr::read_rds(here::here("active", "unsupervised_obj_components.Rdata")) 
+
+source(here::here("functions/rename_func.R"))
+
+unsupervised_neighbor_components %>%
+  filter(component == 'PC1' | 
+           component == 'PC2' | 
+           component == 'PC3' | component == 'PC4' |
+           component == 'PC5' | component == 'PC6' |
+           component == 'PC7' | component == 'PC8' |
+           component == 'PC9' | component == 'PC10') %>%
+  mutate(component = factor(component,
+                            levels = c("PC1",
+                                       "PC2",
+                                       "PC3",
+                                       "PC4",
+                                       "PC5",
+                                       "PC6",
+                                       "PC7",
+                                       "PC8",
+                                       "PC9",
+                                       "PC10"))) %>%
+  group_by(dataset, component) %>%
+  slice_max(., order_by = abs(value),
+            n = 15) %>%
+  mutate(terms = rename_func(terms)) %>%
+  ggplot(., aes(x=value,
+                fill = value,
+                y = reorder_within(terms, by =value, within = component)))+
+  geom_col()+
+  scale_y_reordered()+
+  facet_wrap(. ~ component,
+             ncol =2,
+             scales = "free_y")+
+  theme_phil()+
+  ylab("feature")+
+  xlab("contribution")+
+  guides(fill = guide_colorbar(barwidth = 10,
+                               barheight=0.5))+
+  scale_fill_viridis(option="magma",
+                                      begin = 0.2,
+                                      end = 0.8)+
+  ggtitle("What contributes to each principal component?")+
+  guides(fill = "none")
+        
+```
