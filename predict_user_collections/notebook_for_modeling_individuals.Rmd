@@ -1732,7 +1732,9 @@ user_model = foo$models %>% select(username, outcome_type, glmnet_fit)
 #
 # # write out
 readr::write_rds(user_model,
-                 file = here::here("predict_user_collections/data", paste(params$username, "_", params$end_training_year , ".Rdata", sep="")))
+                 file = here::here("predict_user_collections/data", 
+                                   paste(gsub("%20", "_", params$username), 
+                                         "_", params$end_training_year , ".Rdata", sep="")))
 
 ```
 
