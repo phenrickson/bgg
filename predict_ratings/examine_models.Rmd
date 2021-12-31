@@ -69,7 +69,10 @@ source(here::here("functions/avgweight_func.R"))
 ```{r get todays bgg data then filter to year, echo=F, warning=F, message=F}
 
 # get todays data from bgg
-bgg_today<-get_bgg_data_from_github(Sys.Date())
+bgg_today<-get_bgg_data_from_github(Sys.Date()) %>%
+        group_by(game_id) %>%
+        filter(users_rated == max(users_rated)) %>% # make sure we're taking the max entry for each game, as there are some dupes
+        ungroup()
 
 ```
 
@@ -96,9 +99,9 @@ display_preds = function(input_preds,
                        usersrated = users_rated) %>%
                 melt(., id.vars = c("game_id", "name", "yearpublished")) %>%
                 rename(outcome = variable) %>%
-                mutate(type = "") %>%
+                mutate(type = "actual") %>%
                 select(yearpublished, game_id, name, type, outcome, value) %>%
-                as_tibble()
+                as_tibble() 
         
         # bind with current
         combined = bind_rows(estimated, current)
@@ -107,9 +110,10 @@ display_preds = function(input_preds,
         table = combined %>%
                 pivot_wider(names_from = c("type", "outcome"),
                             values_from = c("value")) %>%
-                rename(usersrated = `_usersrated`,
-                       average = `_average`,
-                       baverage = `_baverage`) %>%
+               #             values_fn = length) %>%
+                rename(usersrated = actual_usersrated,
+                       average = actual_average,
+                       baverage = actual_baverage) %>%
                 select(yearpublished,
                        game_id, name, 
                        usersrated, 
@@ -119,30 +123,47 @@ display_preds = function(input_preds,
                        baverage) %>%
                 mutate(yearpublished = as.character(yearpublished),
                        game_id = as.character(game_id)) %>%
-                mutate_if(is.numeric, round, 2) 
+                mutate_if(is.numeric, round, 2)
         
         # flextable
         ft_table = table %>%
-                select(-usersrated) %>%
+             #   select(-usersrated) %>%
                 rename(Published = yearpublished,
                        ID = game_id,
+                       Ratings = usersrated,
                        Name = name) %>%
                 arrange(desc(est_baverage)) %>%
+                rename(Predicted = est_average,
+                       Actual = average,
+                       `Predicted `= est_baverage,
+                       `Actual ` = baverage) %>%
                 mutate(Row = row_number()) %>%
                 select(Row, everything()) %>%
                 flextable() %>%
                 flextable::autofit() %>%
-                add_footer(top = F, values = paste("Predictions as of ", Sys.Date())) %>%
+                add_footer(top = T, values = paste("Predictions as of ", Sys.Date())) %>%
                 bold(part = "header") %>%
                 border_remove() %>%
-                bg(., j = c("est_baverage", "baverage"),
+                bg(., j = c("Predicted ", "Actual "),
                    bg = baverage_func) %>%
-                bg(., j = c("est_average", "average"),
+                bg(., j = c("Predicted", "Actual"),
                    bg = average_func) %>%
-                flextable::align(j = c("est_average", "est_baverage",
-                                       "average", "baverage"),
+                flextable::align(j = c("Predicted", "Predicted ",
+                                       "Actual", "Actual "),
                          align = "center",
-                         part = "all")
+                         part = "all") %>%
+                add_header_row(values = 
+                                       c("",
+                                         "",
+                                         "",
+                                         "",
+                                         "",
+                                         "Average",
+                                         "Average",
+                                         "Geek",
+                                         "Geek")) %>%
+                merge_h(part = "header")
+
         # add_header(average = "Estimated",
         #            baverage = "Estimated", 
         #            top = TRUE) %>%
@@ -166,7 +187,7 @@ We can first estimate the average rating and geek rating for all games given the
 
 Additionally, we lose some of our ability to call our work predictive, in that the community's estimate of the weight of a game is an extremely important indicator of how the community rates the game. To address these concerns, in the next section I first estimate the avgweight and then use the estimated value in the model.
 
-## 2020
+## Estimated Ratings for 2020
 
 ```{r predict ratings for 2020, echo=F, warning=F, message=F}
 
@@ -190,7 +211,7 @@ display_preds(preds,
  
 ```
 
-## 2021
+## Estimated Ratings for 2021
 
 ```{r predict ratings for 2021, echo=F, warning=F, message=F}
 
@@ -215,7 +236,7 @@ display_preds(preds,
  
 ```
 
-## 2022
+## Estimated Ratings for 2022
 
 ```{r predict ratings for 2022, echo=F, warning=F, message=F}
 
@@ -264,13 +285,12 @@ display_preds_with_weights = function(input_preds) {
 
         # get current
         current = input_preds$actual_weight_and_rating %>%
-                select(game_id, name, yearpublished, average, baverage, avgweight) %>%
+                select(game_id, name, yearpublished, usersrated, average, baverage, avgweight) %>%
                 melt(., id.vars = c("game_id", "name", "yearpublished")) %>%
                 rename(outcome = variable) %>%
-                mutate(type = "") %>%
+                mutate(type = "actual") %>%
                 select(yearpublished, game_id, name, type, outcome, value) %>%
                 as_tibble()
-        
 
         # bind with current
         combined = bind_rows(estimated, current)
@@ -279,16 +299,18 @@ display_preds_with_weights = function(input_preds) {
         table = combined %>%
                 pivot_wider(names_from = c("type", "outcome"),
                             values_from = c("value")) %>%
-                rename(avgweight = `_avgweight`,
-                       average = `_average`,
-                       baverage = `_baverage`) %>%
+                rename(usersrated = actual_usersrated,
+                       avgweight = actual_avgweight,
+                       average = actual_average,
+                       baverage = actual_baverage) %>%
                 select(yearpublished,
                        game_id, name, 
+                       usersrated,
                        est_average,
                        average, 
                        est_baverage,
                        baverage,
-                           est_avgweight,
+                       est_avgweight,
                        avgweight) %>%
                 mutate(yearpublished = as.character(yearpublished),
                        game_id = as.character(game_id)) %>%
@@ -296,28 +318,48 @@ display_preds_with_weights = function(input_preds) {
         
         # flextable
         ft_table = table %>%
-                rename(Published = yearpublished,
+                rename(Ratings = usersrated,
+                       Published = yearpublished,
                        ID = game_id,
                        Name = name) %>%
                 arrange(desc(est_baverage)) %>%
+                rename(Predicted = est_average,
+                       Actual = average,
+                       `Predicted `= est_baverage,
+                       `Actual ` = baverage,
+                       `Predicted  ` = est_avgweight,
+                       `Actual  ` = avgweight) %>%
                 mutate(Row = row_number()) %>%
                 select(Row, everything()) %>%
                 flextable() %>%
                 flextable::autofit() %>%
-                add_footer(top = F, values = paste("Predictions as of ", Sys.Date())) %>%
+                add_footer(top = T, values = paste("Predictions as of ", Sys.Date())) %>%
                 bold(part = "header") %>%
                 border_remove() %>%
-                bg(., j = c("est_baverage", "baverage"),
+                bg(., j = c("Predicted ", "Actual "),
                    bg = baverage_func) %>%
-                bg(., j = c("est_average", "average"),
+                bg(., j = c("Predicted", "Actual"),
                    bg = average_func) %>%
-                bg(., j = c("est_avgweight", "avgweight"),
+                bg(., j = c("Predicted  ", "Actual  "),
                    bg = avgweight_func) %>%
-                flextable::align(j = c("est_avgweight", "avgweight",
-                                       "est_average", "est_baverage",
-                                       "average", "baverage"),
+                flextable::align(j = c("Predicted", "Predicted ", "Predicted  ",
+                                       "Actual", "Actual ", "Actual  "),
                          align = "center",
-                         part = "all")
+                         part = "all") %>%
+                add_header_row(values = 
+                                       c("",
+                                         "",
+                                         "",
+                                         "",
+                                         "",
+                                         "Average",
+                                         "Average",
+                                         "Geek",
+                                         "Geek",
+                                         "Complexity",
+                                         "Complexity")) %>%
+                merge_h(part = "header")
+        
         # add_header(average = "Estimated",
         #            baverage = "Estimated", 
         #            top = TRUE) %>%
@@ -329,7 +371,7 @@ display_preds_with_weights = function(input_preds) {
 
 ```
 
-## 2020
+## Estimated Ratngs and Complexity for 2020
 
 ```{r get games and predict both outcomes 2020, echo=F, warning=F, message=F}
 
@@ -351,7 +393,7 @@ display_preds_with_weights(preds)
 
 ```
 
-## 2021
+## Estimated Ratings and Complexity for 2021
 
 ```{r get games and predict both outcomes 2021, echo=F, warning=F, message=F}
 
@@ -373,7 +415,7 @@ display_preds_with_weights(preds)
 
 ```
 
-## 2022
+## Estimated Ratings and Complexity for 2022
 
 ```{r get games and predict both outcomes 2022, echo=F, warning=F, message=F}
 
@@ -395,6 +437,57 @@ display_preds_with_weights(preds)
 
 ```
 
+Get predictions for all.
 
+```{r get preds for all}
 
+# pull ids
+ids = bgg_today %>%
+        filter(game_release_year >= 2020 & game_release_year <= 2023) %>%
+        pull(game_id)
+
+# xgbTree
+# get predictions for all
+preds_all_xgbTree = bake_and_predict_ratings(ids,
+                                         "xgbTree_fit")
+
+# get predictions for all with weights
+preds_weights_all_xgbTree = bake_and_predict_avgweight_and_ratings(ids,
+                                         "xgbTree_fit")
+
+# glmnet
+# get predictions for all
+preds_all_glmnet = bake_and_predict_ratings(ids,
+                                         "glmnet_fit")
+
+# get predictions for all with weights
+preds_weights_all_glmnet = bake_and_predict_avgweight_and_ratings(ids,
+                                         "glmnet_fit")
+
+```
+
+Combine and save output.
+
+```{r combine and save}
+
+preds_out = bind_rows(preds_all_xgbTree$estimate %>%
+                              mutate(type = "bgg"),
+                      preds_all_glmnet$estimate %>%
+                              mutate(type = "bgg"),
+                      preds_weights_all_glmnet$estimated_rating %>%
+                              mutate(type = "est_avgweight"),
+                      preds_weights_all_xgbTree$estimated_rating %>%
+                              mutate(type = "est_avgweight"),
+                      preds_weights_all_xgbTree$estimated_weight %>%
+                              mutate(type = "bgg")) %>%
+        as_tibble() %>%
+        mutate(method = gsub("_fit", "", method)) %>%
+        mutate(date = Sys.Date()) %>%
+        select(date, yearpublished, game_id, name, method, type, outcome, pred) %>%
+        arrange(game_id, method, outcome)
+
+# write
+readr::write_rds(preds_out, file = paste(here::here("predict_ratings/predictions/", paste("preds_", Sys.Date(), ".Rdata", sep=""))))
+
+```
 

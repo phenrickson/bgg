@@ -1551,7 +1551,7 @@ dump("baverage_func", file="functions/baverage_func.R")
 # avg rating
 average_func<- function(x) {
         
-        breaks = seq(6, 9.9, 0.1)
+        breaks = seq(6.5, 9.9, 0.1)
         colorRamp=colorRampPalette(c("white", "deepskyblue1"))
         col_palette <- colorRamp(length(breaks))
         mycut <- cut(x, 
