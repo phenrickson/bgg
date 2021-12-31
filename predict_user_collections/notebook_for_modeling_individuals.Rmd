@@ -1601,7 +1601,7 @@ year_table %>%
 
 ```
 
-### Interactive Table for Resampling
+## Interactive Predictions from Resampling
 
 Interactive table for predictions from resampling.
 
@@ -1704,7 +1704,7 @@ foo$preds_table %>%
 
 ```
 
-### Interactive Table for Upcoming Games `r paste(params$end_training_year+1, " and On", sep="")`
+## Interactive Table for Upcoming Games `r paste(params$end_training_year+1, " and On", sep="")`
 
 ```{r interactive preds, echo=F, warning=F, message=F}
 

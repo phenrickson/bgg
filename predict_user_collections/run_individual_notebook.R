@@ -20,7 +20,7 @@ users = list.files(here::here("predict_user_collections/individual_reports")) %>
 user_list = users$username
 year_end = 2019
 
-user_list = "mrbananagrabber"
+user_list = "ZeeGarcia"
 
 # run
 foreach(i=1:length(user_list)) %do% {
