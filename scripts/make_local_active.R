@@ -286,6 +286,6 @@ readr::write_rds(models_complexity, file = here::here("active/models_complexity.
 readr::write_rds(recipe_complexity, file = here::here("active/recipe_complexity.Rdata"))
 readr::write_rds(models_ratings, file = here::here("active/models_ratings.Rds"))
 readr::write_rds(recipe_ratings, file = here::here("active/recipe_ratings.Rdata"))
-readr::write_rds(games_datasets_ratings, file = here::here("active/recipe_ratings.Rdata"))
+readr::write_rds(games_datasets_ratings, file = here::here("active/games_datasets_ratings.Rdata"))
 
 print("files loaded to active")
