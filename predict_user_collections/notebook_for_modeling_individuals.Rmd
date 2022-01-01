@@ -15,6 +15,7 @@ params:
 ```{r load and set packages, echo=F, warning=F, message=F,  results = 'hide'}
 
 knitr::opts_chunk$set(echo = F,
+                      error = F,
                       dev="png",
                       fig.width = 10,
                       fig.height = 6)
@@ -1620,7 +1621,7 @@ foo$oos %>%
 
 How well did a model trained on a user's collection through `r params$end_training_year` perform in predicting games for the user from `r params$end_training_year +1`?
 
-```{r assess by year, warning = F, message=F}
+```{r assess by year, warning = F, message=F, error=F}
 
 foo$preds %>%
         select(username, 
@@ -1727,14 +1728,14 @@ foo$preds %>%
 
 ```{r save output}
 
-user_model = foo$models %>% select(username, outcome_type, glmnet_fit)
-
-#
-# # write out
-readr::write_rds(user_model,
-                 file = here::here("predict_user_collections/data", 
-                                   paste(gsub("%20", "_", params$username), 
-                                         "_", params$end_training_year , ".Rdata", sep="")))
+# user_model = foo$models %>% select(username, outcome_type, glmnet_fit)
+# 
+# #
+# # # write out
+# readr::write_rds(user_model,
+#                  file = here::here("predict_user_collections/data", 
+#                                    paste(gsub("%20", "_", params$username), 
+#                                          "_", params$end_training_year , ".Rdata", sep="")))
 
 ```
 
