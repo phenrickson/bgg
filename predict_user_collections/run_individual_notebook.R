@@ -74,6 +74,35 @@ source(here::here("functions/get_collection.R"))
 #"Bhouse33",
 # "Volnay",
 #    "Eric",
+# # next batch
+# user_list = c("Houdinimaster11",
+#               "butilheiro",
+#               "TerminalVentures",
+#               "Sobeknofret",
+#               "Vernisious",
+#               "Cpf86",
+#               "Leadera",
+#               "Omnivoid07",
+#               "Secular_priest",
+#               "Tytusmk",
+#               "QuarkBart",
+#               "Jarl Gilles"
+# )
+
+# # next batch
+# user_list = c("Ancyberturtle",
+#               "Selfmade100aire",
+#               "Redfame",
+#               "criicket",
+#               "isaacr584",
+#               "Browza84",
+#               "casadeisogniburritts",
+#               "cinci33",
+#               "sXero",
+#               "decimator85",
+#               "Elandil84",
+#               "mrkayfabe",
+#               "CitizenBJ")
 
 # need to circle back to these guys
 user_list = c("fishingking",
@@ -82,19 +111,31 @@ user_list = c("fishingking",
 year_list = 2018
 
 # next batch
-user_list = c("Houdinimaster11",
-              "butilheiro",
-              "TerminalVentures",
-              "Sobeknofret",
-              "Vernisious",
-              "Cpf86",
-              "Leadera",
-              "Omnivoid07",
-              "Secular_priest",
-              "Tytusmk",
-              "QuarkBart",
-              "Jarl Gilles"
-              )
+user_list = c("Sparticuse",
+              "zzapper0",
+              "fullmetalruin",
+              "daves",
+              "Mess_AXP",
+              "DarkJjay",
+              "Unpopular_Mechanics",
+              "Tatuschrag",
+              "Cemaran",
+              "DicedOut",
+              "iamohcy",
+              "kayftb",
+              "xpepox",
+              "Beardlessbrady",
+              "qasic",
+              "jjmarlette",
+              "esteves91",
+              "Soltydog",
+              "macclellan",
+              "nimonus",
+              "FrankyJ9",
+              "theDL",
+              "iisamu")
+              
+              
 year_end = 2019
 
 # amend
