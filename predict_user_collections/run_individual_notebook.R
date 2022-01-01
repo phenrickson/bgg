@@ -1,6 +1,8 @@
 # run user notebook
 library(tidyverse)
 library(foreach)
+
+source(here::here("functions/get_collection.R"))
 # 
 # # get user list
 # users = list.files(here::here("predict_user_collections/user_reports")) %>%
@@ -28,15 +30,75 @@ library(foreach)
 #user_list = 'monstronaut'
 #user_list = 'philfromqueens'
 
-user_list = c("kshammas",
-              "Johntravels1",
-              "TBM_burn",
-              "Jm82",
-              "BigYani369"
-              )
+# user_list = c("Herakleitos",
+#               "Veritaas",
+#               "Agent Chi",
 
-# set year end
+# user_list = c("EuroCultAV",
+#               "Gutterspud")
+
+# user_list = c("Spire_Rubica",
+#               "Tigerguitarist",
+#               "wizkid27",
+#               "Gameboss",
+#               "Aural_turpitude")
+# 
+# # next batch
+# user_list = c("jm82")
+#user_list = c("wizkid27")
+
+# # next batch
+# user_list = c("Gameboss",
+#               "internetfloozy",
+#               "bsnyder788",
+#               "enrikezido",
+#               "St Vincent",
+#               "Allgood322", 
+#               "Agent Chi",
+#               "DarrenJ23",
+#               "omeletterice",
+#               "yayitsk")
+
+# # next batch
+# user_list = c("achuds",
+#               "RushNYC",
+#               "BeeDub1515",
+#               "fionajackilarious",
+#               "fishingking",
+#               "chewbacca390",
+#               "Kameronsnewphone",
+#               "Guilding_Light")
+
+#              "GertrudeBell",
+# Jimmygabioud"
+#"Bhouse33",
+# "Volnay",
+#    "Eric",
+
+# need to circle back to these guys
+user_list = c("fishingking",
+              "revengeanceful",
+              "achuds")
+year_list = 2018
+
+# next batch
+user_list = c("Houdinimaster11",
+              "butilheiro",
+              "TerminalVentures",
+              "Sobeknofret",
+              "Vernisious",
+              "Cpf86",
+              "Leadera",
+              "Omnivoid07",
+              "Secular_priest",
+              "Tytusmk",
+              "QuarkBart",
+              "Jarl Gilles"
+              )
 year_end = 2019
+
+# amend
+user_list = gsub(" ", "%20", user_list)
 
 # run
 foreach(i=1:length(user_list)) %do% {
