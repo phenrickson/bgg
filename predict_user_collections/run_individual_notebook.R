@@ -26,7 +26,14 @@ library(foreach)
 #user_list = 'Watch%20It%20Played'
 #user_list = "DTlibrary"
 #user_list = 'monstronaut'
-user_list = 'philfromqueens'
+#user_list = 'philfromqueens'
+
+user_list = c("kshammas",
+              "Johntravels1",
+              "TBM_burn",
+              "Jm82",
+              "BigYani369"
+              )
 
 # set year end
 year_end = 2019
