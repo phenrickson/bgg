@@ -19,11 +19,12 @@ users = list.files(here::here("predict_user_collections/user_reports")) %>%
         unique()
 
 # get list
-user_list = users$username[21:30]
+user_list = users$username
 year_end = 2019
 
 #user_list = "ZeeGarcia"
 #user_list = 'Watch%20It%20Played'
+user_list = "Quinns"
 
 # run
 foreach(i=1:length(user_list)) %do% {

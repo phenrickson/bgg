@@ -13,7 +13,7 @@ library(keyring)
 PROJECT_ID <- "gcp-analytics-326219"
 BUCKET_NAME <- "test-bucket"
 
-bq_auth(email = key_get(service='ae'))
+bq_auth(email = 'phil.henrickson@aebs.com')
 
 # establish connection
 bigquerycon<-dbConnect(
