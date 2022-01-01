@@ -24,7 +24,7 @@ year_end = 2019
 
 #user_list = "ZeeGarcia"
 #user_list = 'Watch%20It%20Played'
-user_list = "Quinns"
+user_list = "DTlibrary"
 
 # run
 foreach(i=1:length(user_list)) %do% {
