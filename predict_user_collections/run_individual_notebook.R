@@ -105,29 +105,27 @@ source(here::here("functions/get_collection.R"))
 #               "CitizenBJ")
 
 # need to circle back to these guys
-user_list = c("fishingking",
-              "revengeanceful",
-              "Moudimash99",
-              "Dprski133",
-              "FrankyJ9",
-              "transplant83",
-              "tomtermite",
-              "kurosaba",
-              "Grimstringer",
-              "GeekyBearSnob",
-              "EduardTodor",
-              "Echochee",
-              "rhyzz",
-              "da_sandvich",
-              "Rantuckjr",
-              "Holtey",
+# user_list = c("fishingking",
+#               "revengeanceful",
+#               "Moudimash99",
+#               "Dprski133",
+#               "FrankyJ9",
+#               "transplant83",
+#               "tomtermite",
+#               "kurosaba",
+#               "Grimstringer",
+#               "GeekyBearSnob",
+#               "EduardTodor",
+#               "Echochee",
+#               "rhyzz",
+#               "da_sandvich",
+#               "Rantuckjr",
+#"greno",
+#achuds
+user_list = c("Holtey",
               "man_on_the_lam",
-              "greno",
               "Nicromaniac",
-              "achuds")
-
-
-user_list = c("KikiaH")
+              "KikiaH")
 year_end = 2018
 
 # # next batch
@@ -364,7 +362,7 @@ year_end = 2018
 #               "Dasfungames",
 #               "BlackSheep")
 
-user_list = "mmrempen"
+# user_list = "mmrempen"
 
 user_list = c("grandslam",
               "Longboye",
