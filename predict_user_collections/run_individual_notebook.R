@@ -107,6 +107,7 @@ source(here::here("functions/get_collection.R"))
 # need to circle back to these guys
 user_list = c("fishingking",
               "revengeanceful",
+              "daves",
               "achuds")
 year_list = 2018
 
@@ -133,10 +134,61 @@ user_list = c("Sparticuse",
               "nimonus",
               "FrankyJ9",
               "theDL",
-              "iisamu")
-              
-              
+              "iisamu",
+              "bolivina")
+
+# next batch
+user_list = c("h3wh0s33ks",
+              "tomtermite",
+              "Grail01",
+              "Rjasimmons",
+              "Ir0nM0nkey",
+              "tim95030",
+              "Eatenbyahippo",
+              "Quatrimus",
+              "twistedjoker597",
+              "Moudimash99",
+              "petewiss",
+              "Boersman",
+              "ThinkinIncan",
+              "Halmarsta",
+              "Snowman1616",
+              "axelhacksel",
+              "Drmaestro",
+              "Jorian995",
+              "Comeam4",
+              "Florisofzo",
+              "Briezee",
+              "Chickenmoose",
+              "troytbyrne",
+              "Serneum",
+              "RedTabby",
+              "Bahdom",
+              "Chills81",
+              "defdrago",
+              "Biggy_serg",
+              "Pyragor",
+              "Coug",
+              "ManikMan",
+              "Gijoe61703",
+              "Wilsonza",
+              "Badcobber",
+              "Climbon321",
+              "anwei",
+              "oloboloboo",
+              "Catatafish")
+
 year_end = 2019
+
+
+# next batch
+
+
+
+
+
+
+
 
 # amend
 user_list = gsub(" ", "%20", user_list)
