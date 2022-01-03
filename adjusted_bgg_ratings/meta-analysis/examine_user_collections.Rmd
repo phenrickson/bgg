@@ -70,7 +70,9 @@ users = list.files(here::here("predict_user_collections/user_reports")) %>%
         filter(!grepl("(files)$", value)) %>% # filter out those that models didn't run for, which were ones with just the files
         rename(file = value) %>%
         mutate(user = gsub('.{10}$', '', file)) %>%
-        mutate(year = str_sub(gsub(".html", "", file), -4, -1))
+        mutate(year = str_sub(gsub(".html", "", file), -4, -1)) %>%
+        mutate(user = case_when(user == 'The_Inquiry' ~ '_The_Inquiry_',
+                                TRUE ~ user))
 
 # how many analyses have i run?
 n_users = users %>%
@@ -104,9 +106,49 @@ user_collections = foreach(i = 1:length(get_users),
                         nest(-username)
                 
                 foo
-                }
+                           }
+
+# bind together
+user_collections_tbl= rbindlist(user_collections) %>% as_tibble()
 
 # which names did we miss (due to whitespace?)
+missing_users = gsub("_",
+                     "%20",
+                     get_users[which(!(get_users %in% user_collections_tbl$username))])
+
+#@ get these guys
+missing_users_collections = foreach(i = 1:length(missing_users), 
+                           .packages = c('tidyverse',
+                                         'bggAnalytics'),
+                           .errorhandling = 'pass') %dopar% {
+                
+                foo = get_collection(missing_users[i]) %>%
+                        nest(-username)
+                
+                foo
+                           }
+
+# get into a tbl
+missing_users_collections_tbl = rbindlist(missing_users_collections) %>% as_tibble()
+
+# bind together and get them together
+collections_table = bind_rows(user_collections_tbl,
+                              missing_users_collections_tbl)
+
+# remove 
+rm(missing_users_collections,
+   missing_users_collections_tbl,
+   user_collections,
+   user_collections_tbl)
+
+```
+
+We now have a table of all of these user's collections. We now need to get information from BGG about games, which we can use in our analysis.
+
+```{r get game info}
+
+source()
+active_games = 
 
 
 ```
