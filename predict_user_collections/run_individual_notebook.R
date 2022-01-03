@@ -391,8 +391,10 @@ user_list = c("grandslam",
               "greendayasd",
               "Mandovarius",
               "TheBukaro",
-              "Kopah",
-              "Tha_Crow",
+              "Kopah")
+
+
+user_list = c("Tha_Crow",
               "Destroher",
               "r0t1prata",
               "Grimnick",
