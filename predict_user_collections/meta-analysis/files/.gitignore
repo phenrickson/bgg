@@ -29,3 +29,6 @@ vignettes/*.pdf
 .Renviron
 data
 models
+games_flattened_2022-01-03.Rdata
+full_game_ids_2022-01-03.Rdata
+collections_table_2022-01-03.Rdata
