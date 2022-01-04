@@ -1,0 +1,391 @@
+---
+title: "Meta Analysis of User Collections & Models"
+author: Phil Henrickson
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+        toc: true
+        toc_depth: 2
+        number_sections: true
+---
+```{r load and set packages, echo=F, warning=F, message=F,  results = 'hide'}
+
+knitr::opts_chunk$set(echo = F,
+                      error = F,
+                      dev="png",
+                      fig.width = 10,
+                      fig.height = 6)
+
+options(knitr.duplicate.label = "allow")
+
+options(scipen=999)
+
+# source
+source(here::here("scripts/load_packages.R"))
+source(here::here("functions/theme_phil.R"))
+rm(a)
+
+# functions
+source(here::here("functions/get_collection.R"))
+
+# library
+#library(webshot2)
+library(magick)
+library(flextable)
+library(bggAnalytics)
+library(tidymodels)
+library(workflows)
+library(rsample)
+
+set_flextable_defaults(theme_fun = theme_booktabs,
+                       font.color = "black",
+  padding.bottom = 6, 
+  padding.top = 6,
+  padding.left = 6,
+  padding.right = 6,
+  background.color = "white")
+
+```
+
+```{r get big query tables, warning=F, message=F}
+
+library(bigrquery)
+
+# get project credentials
+PROJECT_ID <- "gcp-analytics-326219"
+BUCKET_NAME <- "test-bucket"
+
+# authorize
+bq_auth(email = "phil.henrickson@aebs.com")
+
+# establish connection
+bigquerycon<-dbConnect(
+        bigrquery::bigquery(),
+        project = PROJECT_ID,
+        dataset = "bgg"
+)
+
+# query active games
+active_games<-DBI::dbGetQuery(bigquerycon, 
+                              'SELECT * FROM bgg.active_games_daily')
+
+# query active games
+game_expansions<-DBI::dbGetQuery(bigquerycon, 
+                              'SELECT * FROM bgg.game_expansions')
+
+# bgg_rankings<-bq_table_query(bq_bgg,
+#                         query = 
+#                         quiet = F)
+
+# # set project and schema
+# bq_bgg<- bq_dataset(project = PROJECT_ID,
+#                                     dataset = 'bgg')
+
+```
+
+# Context {-}
+
+I recently made a post in which I offered to train predictive models for user BoardGameGeek collections on r/boardgames. This amounted to training classification models for games that users own or have rated, training on games published before 2020 for must users and predicting games published from 2020 onwards. 
+
+Link to post:
+subbhttps://www.reddit.com/r/boardgames/comments/rtmq3o/post_your_bgg_username_and_ill_train_a_predictive/
+
+This notebook is an analysis of the users who participated and what the models learned about the.
+
+It is worth noting here that this is *not* a representative sample of either BGG or r/boardgames. Users selected into the sample based on viewing the reddit post over the weekend, which was January 1st, so if this sample represents any population it is the bored-at-home-and-checking-the-boardgame-subreddit-on-saturday-morning crowd. Nonetheless, we can still look at the data for these users and maybe make some cool visualizations.
+
+# User Collections
+
+I'll start by getting the full list of users for whom I have trained models - this includes some users from previous reddit posts, friends of mine, and some prominent reviewers.
+
+```{r get user names from folder}
+
+# get user list
+users = list.files(here::here("predict_user_collections/user_reports")) %>%
+        as_tibble() %>%
+        filter(!grepl("(files)$", value)) %>% # filter out those that models didn't run for, which were ones with just the files
+        rename(file = value) %>%
+        mutate(user = gsub('.{10}$', '', file)) %>%
+        mutate(year = str_sub(gsub(".html", "", file), -4, -1)) %>%
+        mutate(user = case_when(user == 'The_Inquiry' ~ '_The_Inquiry_',
+                                TRUE ~ user))
+
+# how many analyses have i run?
+n_users = users %>%
+        mutate(date = Sys.Date()) %>%
+        group_by(date) %>%
+        summarize(users_analyzed = n_distinct(user))
+
+n_users
+```
+
+As of `r n_users$date`, I have run analyses for `r n_users$users_analyzed` collections.
+
+We'll now pull data for each of these collections into one large table.
+
+```{r pull collections, warning=F, message=F, result='hide'}
+
+# library(doParallel)
+# library(parallel)
+# 
+# # get list of unique users
+# get_users = unique(users$user)
+# 
+# registerDoParallel(detectCores()-1)
+# 
+# # loop in parallel
+# user_collections = foreach(i = 1:length(get_users), 
+#                            .packages = c('tidyverse',
+#                                          'bggAnalytics'),
+#                            .errorhandling = 'pass') %dopar% {
+#                 
+#                 foo = get_collection(get_users[i]) %>%
+#                         nest(-username)
+#                 
+#                 foo
+#                            }
+# 
+# # bind together
+# user_collections_tbl= rbindlist(user_collections) %>% as_tibble()
+# 
+# # which names did we miss (due to whitespace?)
+# missing_users = gsub("_",
+#                      "%20",
+#                      get_users[which(!(get_users %in% user_collections_tbl$username))])
+# 
+# #@ get these guys
+# missing_users_collections = foreach(i = 1:length(missing_users), 
+#                            .packages = c('tidyverse',
+#                                          'bggAnalytics'),
+#                            .errorhandling = 'pass') %dopar% {
+#                 
+#                 foo = get_collection(missing_users[i]) %>%
+#                         nest(-username)
+#                 
+#                 foo
+#                            }
+# 
+# # get into a tbl
+# missing_users_collections_tbl = rbindlist(missing_users_collections) %>% as_tibble()
+# 
+# # bind together and get them together
+# collections_table = bind_rows(user_collections_tbl,
+#                               missing_users_collections_tbl)
+# 
+# # stop parallel
+# registerDoSEQ()
+# 
+# # remove 
+# rm(missing_users_collections,
+#    missing_users_collections_tbl,
+#    user_collections,
+#    user_collections_tbl)
+
+# save locally
+readr::write_rds(collections_table,
+                                  file = here::here("predict_user_collections/meta-analysis/files", paste("collections_table_", Sys.Date(), ".Rdata", sep="")))
+
+# load most recent
+collections_table = readr::read_rds(here::here("predict_user_collections/meta-analysis/files", paste("collections_table_", "2022-01-03", ".Rdata", sep="")))
+
+```
+
+We now have a table of all of these user's collections. We now need to get information from BGG about games, which we can use in our analysis. I'll also grab info on game expansions, as I'll want to omit those from a lot of this analysis
+
+```{r get game info}
+
+source(here::here("functions/get_bgg_data_from_github.R"))
+source(here::here("functions/get_game_record.R"))
+
+# get todays data from bgg
+bgg_today<-get_bgg_data_from_github(Sys.Date())
+
+# # get flattened file for these games _and any games that users might have that are not present here_
+# bgg_game_ids = bgg_today %>%
+#         select(game_id) %>%
+#         pull(game_id) %>%
+#         unique() 
+# 
+# # now we'll see if there are games users own, have rated, or have previously owned that aren't in the bgg data
+# collection_game_ids = collections_table %>%
+#         unnest(data) %>%
+#         filter(!(game_id %in% unique(game_expansions$expansion_id))) %>%
+#         pull(game_id) %>%
+#         unique()
+# 
+# # how many games do people have that aren't in the bgg table?
+# missing_game_ids = collection_game_ids[which(!(collection_game_ids %in% bgg_game_ids))]
+# 
+# # combine
+# full_game_ids = c(bgg_game_ids,
+#                   missing_game_ids)
+# 
+# # save game_ids
+# readr::write_rds(full_game_ids, 
+#                  file = here::here("predict_user_collections/meta-analysis/files", paste("full_game_ids_", Sys.Date(), ".Rdata", sep="")))
+
+```
+
+We'll then get a full set of data on games from the daily BGG table as well as games that are in user collections.
+
+```{r push all ids through API}
+
+# use function to get records from bgg
+# # takes about, 10 min?
+# suppressMessages({
+#         games_flattened = get_game_record(full_game_ids) %>%
+#                 mutate(number_designers = rowSums(across(starts_with("des_"))))
+# })
+
+# # save both
+# readr::write_rds(games_flattened,
+#                  file = here::here("predict_user_collections/meta-analysis/files", paste("games_flattened_", Sys.Date(), ".Rdata", sep="")))
+
+# load from local
+games_flattened = readr::read_rds(here::here("predict_user_collections/meta-analysis/files", paste("games_flattened_", "2022-01-03", ".Rdata", sep="")))
+
+# load from local
+full_game_ids = readr::read_rds(here::here("predict_user_collections/meta-analysis/files", paste("full_game_ids_", "2022-01-03", ".Rdata", sep="")))
+
+# readr::write_rds(flattened_names, 
+#                  file = here::here("predict_user_collections/meta-analysis/files", paste("flattened_names_", Sys.Date(), ".Rdata", sep="")))
+
+# # unite to one string varaible for storage
+# games_united = games_flattened %>%
+#         unite(string, sep = "_", remove = TRUE, na.rm = FALSE)
+# 
+# # get column names
+# flattened_names = names(games_flattened)
+
+# # get column names
+# flattened_names = names(games_flattened)
+# # separated
+# games_separated = games_united %>%
+#         separate(string, 
+#                  into = flattened_names,
+#                  convert = T,
+#                  sep = "_",
+#                  remove = T)
+
+```
+
+We can then join this up with our collection data as needed so we can get some basic features about games.
+
+```{r combine}
+
+collections_info = collections_table %>%
+        unnest(data) %>%
+        filter(game_id %in% full_game_ids) %>%
+        left_join(., games_flattened %>%
+                          select(timestamp,
+                                 game_id,
+                                 name,
+                                 yearpublished,
+                                 rank,
+                                 average,
+                                 baverage,
+                                 stddev,
+                                 usersrated,
+                                 avgweight,
+                                 minplayers,
+                                 maxplayers,
+                                 timestamp),
+                  by = c("game_id"))
+
+```
+
+# Exploratory Analysis
+
+How do the users compare in their ratings to the average ratings on BoardGameGeek?
+
+```{r user ratings vs average, fig.height=8, fig.width=10}
+
+set.seed(1999)
+collections_info %>%
+        filter(!(is.na(rating))) %>%
+        ggplot(., aes(x=rating,
+                      size = usersrated,
+                      label = name,
+                      y=average))+
+        geom_jitter(alpha=0.1,
+                    width = 0.1,
+                    height = 0.1)+
+        # geom_text(check_overlap = T,
+        #           size = 2.5,
+        #           alpha=0.8)+
+        theme_phil()+
+        coord_cartesian(xlim = c(0,10),
+                        ylim = c(0, 10))+
+        geom_smooth(show.legend=F)+
+        theme(legend.title = element_text())+
+        guides(size = guide_legend(title.position = 'top'))
+        
+```
+
+Games most frequently owned
+
+```{r games owned, fig.height=8, fig.width=10}
+
+collections_info %>%
+        group_by(game_id, name) %>%
+        count() %>%
+        ungroup() %>%
+        slice_max(order_by = n,
+                  n = 100) %>%
+        ggplot(., aes(x=reorder(name,n),
+                      
+                      y=n))+
+        geom_col()+
+        theme_phil()+
+        coord_flip()+
+        theme(panel.grid.major = element_blank())
+
+```
+
+
+```{r user average vs bgg average, fig.height=8, fig.width=10, warning=F, message=F}
+
+set.seed(1999)
+library(plotly)
+
+#ggplotly(
+collections_info %>%
+        filter(!(is.na(rating))) %>%
+        group_by(game_id, name, average, usersrated) %>%
+        summarize(sample_average = mean(rating),
+                  sample_ratings = n(),
+                  .groups = 'drop') %>%
+        mutate(diff = sample_average - average) %>%
+        filter(sample_ratings > 5) %>%
+        ggplot(., aes(x=sample_average,
+              #        size = sample_ratings,
+                  color = diff,
+                      label = name,
+                      y=average))+
+        geom_point()+
+        geom_text_repel(max.overlaps=25,
+                        size = 3)+
+        theme_phil()+
+        geom_abline(slope=1,
+                    intercept = 0,
+                    linetype = 'dotted',
+                    col = 'grey60')+
+     #   geom_smooth(show.legend=F)+
+        theme(legend.title = element_text())+
+        guides(color = guide_colorbar(title.position = 'top',
+                                      barheight = 0.5,
+                                      barwidth=15,
+                                    title = 'Sample Average - BGG Average'),
+               size = "none")+
+        scale_color_gradient(low = "red",
+                             high = "deepskyblue1",
+                             oob = scales::squish)
+        # scale_color_gradient2_tableau(limits = c(-4,
+        #                                          4),
+        #                               oob = scales::squish)
+
+# size = guide_legend(title.position = 'top',
+#                                    title = 'Ratings in Sample'),
+#                
+
+```
