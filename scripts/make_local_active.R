@@ -281,6 +281,7 @@ readr::write_rds(unsupervised_neighbors, file = here::here("active/unsupervised_
 readr::write_rds(recipe_prep,  file = here::here("active/unsupervised_recipe_prep.Rdata"))
 readr::write_rds(publisher_list, file = here::here("active/publisher_list.Rdata"))
 readr::write_rds(top_designers, file = here::here("active/top_designers.Rdata"))
+readr::write_rds(top_artists, file = here::here("active/top_artists.Rdata"))
 readr::write_rds(playercounts, file = here::here("active/playercounts.Rdata"))
 readr::write_rds(models_complexity, file = here::here("active/models_complexity.Rds"))
 readr::write_rds(recipe_complexity, file = here::here("active/recipe_complexity.Rdata"))
@@ -289,3 +290,6 @@ readr::write_rds(recipe_ratings, file = here::here("active/recipe_ratings.Rdata"
 readr::write_rds(games_datasets_ratings, file = here::here("active/games_datasets_ratings.Rdata"))
 
 print("files loaded to active")
+
+# remove
+rm(list=ls())
