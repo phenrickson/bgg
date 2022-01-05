@@ -117,6 +117,7 @@ n_users = users %>%
         summarize(users_analyzed = n_distinct(user))
 
 n_users
+
 ```
 
 As of `r n_users$date`, I have run analyses for `r n_users$users_analyzed` collections.
@@ -181,12 +182,16 @@ We'll now pull data for each of these collections into one large table.
 #    user_collections,
 #    user_collections_tbl)
 
-# save locally
-readr::write_rds(collections_table,
-                                  file = here::here("predict_user_collections/meta-analysis/files", paste("collections_table_", Sys.Date(), ".Rdata", sep="")))
+# # save locally
+# readr::write_rds(collections_table,
+#                                   file = here::here("predict_user_collections/meta-analysis/files", paste("collections_table_", Sys.Date(), ".Rdata", sep="")))
 
 # load most recent
-collections_table = readr::read_rds(here::here("predict_user_collections/meta-analysis/files", paste("collections_table_", "2022-01-03", ".Rdata", sep="")))
+collections_files = list.files(here::here("predict_user_collections/meta-analysis/files"))
+most_recent_table = collections_files[grepl("table", collections_files)]
+most_recent_full_game_ids = collections_files[grepl("full_game_ids", collections_files)]
+collections_table = readr::read_rds(here::here("predict_user_collections/meta-analysis/files", most_recent_table))
+full_game_ids= readr::read_rds(here::here("predict_user_collections/meta-analysis/files", most_recent_full_game_ids))
 
 ```
 
@@ -224,6 +229,39 @@ bgg_today<-get_bgg_data_from_github(Sys.Date())
 # readr::write_rds(full_game_ids, 
 #                  file = here::here("predict_user_collections/meta-analysis/files", paste("full_game_ids_", Sys.Date(), ".Rdata", sep="")))
 
+# # split into model
+# info = games_flattened %>%
+#         select(timestamp,
+#                type,
+#                game_id,
+#                type,
+#                name,
+#                yearpublished,
+#                rank,
+#                average,
+#                baverage,
+#                stddev,
+#                usersrated,
+#                avgweight,
+#                minplayers,
+#                maxplayers,
+#                playingtime,
+#                minplaytime,
+#                maxplaytime,
+#                minage,
+#                numtrading,
+#                numwanting,
+#                numwishing,
+#                numcomments)
+# 
+# categories = games_flattened %>%
+#         select(game_id,
+#                starts_with("cat")) %>%
+#         melt(id.vars = c("game_id")) %>%
+#         mutate(variable = gsub("^(cat_)", "", variable)) %>%
+#         filter(value == 1) %>%
+#         rename(category = variable)
+
 ```
 
 We'll then get a full set of data on games from the daily BGG table as well as games that are in user collections.
@@ -242,10 +280,9 @@ We'll then get a full set of data on games from the daily BGG table as well as g
 #                  file = here::here("predict_user_collections/meta-analysis/files", paste("games_flattened_", Sys.Date(), ".Rdata", sep="")))
 
 # load from local
-games_flattened = readr::read_rds(here::here("predict_user_collections/meta-analysis/files", paste("games_flattened_", "2022-01-03", ".Rdata", sep="")))
-
-# load from local
-full_game_ids = readr::read_rds(here::here("predict_user_collections/meta-analysis/files", paste("full_game_ids_", "2022-01-03", ".Rdata", sep="")))
+most_recent_flattened = collections_files[grepl("games_flattened", collections_files)]
+games_flattened = readr::read_rds(here::here("predict_user_collections/meta-analysis/files",
+                                             most_recent_flattened))
 
 # readr::write_rds(flattened_names, 
 #                  file = here::here("predict_user_collections/meta-analysis/files", paste("flattened_names_", Sys.Date(), ".Rdata", sep="")))
@@ -296,30 +333,298 @@ collections_info = collections_table %>%
 
 # Exploratory Analysis
 
+## Collection Size
+
+```{r plot owned, wanted, etc}
+
+
+collections_info %>%
+        filter(type == 'boardgame') %>%
+        select(username, date, game_id, rating, own, prevowned) %>%
+        mutate(rated = case_when(is.na(rating) ~ 0,
+                                 TRUE ~ 1)) %>%
+        select(-rating) %>%
+        melt(id.vars = c("username", "date", "game_id")) %>%
+        group_by(username, date, variable) %>%
+        summarize(games = sum(value),
+                  .groups = 'drop') %>%
+        group_by(variable) %>%
+        mutate(mean_games = mean(games),
+               median_games = median(games),
+               max_games = max(games)) %>%
+        ggplot(., aes(x=games,
+                      y=reorder(variable, median_games)))+
+        stat_density_ridges(alpha=0.8,
+                            quantile_lines = TRUE,
+                            quantile_fun = median,
+                            quantiles = 2) + 
+        theme_phil()+
+        xlab("number of games")+
+        ylab("collection variable")
+
+```
+
+What was the distribution of games owned by the users (not counting expansions)?
+
+```{r plot owned distribution}
+
+temp = collections_info %>%
+        filter(type == 'boardgame') %>%
+        select(username, date, game_id, rating, own, prevowned) %>%
+        mutate(rated = case_when(is.na(rating) ~ 0,
+                                 TRUE ~ 1)) %>%
+        select(-rating) %>%
+        melt(id.vars = c("username", "date", "game_id")) %>%
+        filter(variable == 'own') %>%
+        group_by(username, date, variable) %>%
+        summarize(games = sum(value),
+                  .groups = 'drop') %>%
+        mutate(mean_games = mean(games),
+               median_games = median(games),
+               max_games = max(games))
+
+temp %>%
+        ggplot(., aes(x=games))+
+      #  geom_density(alpha=0.8)+
+        geom_histogram(bins=100)+
+        geom_vline(aes(xintercept = mean_games),
+                   col = 'blue')+
+        facet_wrap(variable~.,
+                   ncol =1)+
+        theme_phil()+
+        annotate("text",
+                 x = temp$median_games[1]*5,
+                 y = 50,
+                 color = 'blue',
+                 label = paste('median games owned:', temp$median_games[1]))+
+        xlab("number of games owned")+
+        ylab("number of users")+
+        annotate("text",
+                 x = 0.9*temp$max_games[1],
+                 y = 19,
+                 color = "orange",
+                 label = paste('most games owned:', temp$max_games[1]))+
+        geom_curve(
+                aes(x = 0.9*max_games, 
+                    y = 15,
+                    xend = max_games, 
+                    yend = 5),
+                data = temp,
+                curvature = -0.2,
+                color = 'orange',
+                arrow = arrow(length = unit(0.03, "npc")))
+
+rm(temp)
+
+```
+
+What about the distribution of games rated?
+
+```{r plot owned}
+
+temp = collections_info %>%
+        filter(type == 'boardgame') %>%
+        select(username, date, game_id, rating, own, prevowned) %>%
+        mutate(rated = case_when(is.na(rating) ~ 0,
+                                 TRUE ~ 1)) %>%
+        select(-rating) %>%
+        melt(id.vars = c("username", "date", "game_id")) %>%
+        filter(variable == 'rated') %>%
+        group_by(username, date, variable) %>%
+        summarize(games = sum(value),
+                  .groups = 'drop') %>%
+        mutate(mean_games = mean(games),
+               median_games = median(games),
+               max_games = max(games))
+
+temp %>%
+        ggplot(., aes(x=games))+
+      #  geom_density(alpha=0.8)+
+        geom_histogram(bins=100)+
+        geom_vline(aes(xintercept = mean_games),
+                   col = 'blue')+
+        facet_wrap(variable~.,
+                   ncol =1)+
+        theme_phil()+
+        annotate("text",
+                 x = temp$median_games[1]*5,
+                 y = 50,
+                 color = 'blue',
+                 label = paste('median games rated:', temp$median_games[1]))+
+        xlab("number of games rated")+
+        ylab("number of users")+
+        annotate("text",
+                 x = 0.9*temp$max_games[1],
+                 y = 19,
+                 color = "orange",
+                 label = paste('most games rated:', temp$max_games[1]))+
+        geom_curve(
+                aes(x = 0.9*max_games, 
+                    y = 15,
+                    xend = max_games, 
+                    yend = 5),
+                data = temp,
+                curvature = -0.2,
+                color = 'orange',
+                arrow = arrow(length = unit(0.03, "npc")))
+
+```
+
+How do these numbers usually compare (excluding users who did not rate at least one game)?
+
+```{r owned vs rated}
+
+collections_info %>%
+        filter(type == 'boardgame') %>%
+        select(username, date, game_id, rating, own, prevowned) %>%
+        mutate(rated = case_when(is.na(rating) ~ 0,
+                                 TRUE ~ 1)) %>%
+        select(-rating) %>%
+        melt(id.vars = c("username", "date", "game_id")) %>%
+        group_by(username, date, variable) %>%
+        summarize(games = sum(value),
+                  .groups = 'drop') %>%
+        spread(variable, games) %>%
+        filter(rated > 0) %>%
+        mutate(diff = own - rated) %>%
+        ggplot(., aes(x=own,
+                      label = username,
+                      y=rated))+
+        geom_point(alpha=0.75)+
+        # geom_text_repel(check_overlap = T,
+        #           size = 3)+
+        theme_phil()+
+        geom_abline(intercept = 0,
+                    slope = 1,
+                    linetype = 'dotted')+
+        annotate("label",
+                 x = 150,
+                 y = 1200,
+                 label = "rate more than own")+
+        annotate("label",
+                 x = 850,
+                 y = 150,
+                 label = "own more than rate")
+
+collections_info %>%
+        filter(type == 'boardgame') %>%
+        select(username, date, game_id, rating, own, prevowned) %>%
+        mutate(rated = case_when(is.na(rating) ~ 0,
+                                 TRUE ~ 1)) %>%
+        select(-rating) %>%
+        melt(id.vars = c("username", "date", "game_id")) %>%
+        group_by(username, date, variable) %>%
+        summarize(games = sum(value),
+                  .groups = 'drop') %>%
+        spread(variable, games) %>%
+        filter(rated > 0) %>%
+        mutate(diff = own - rated) %>%
+        ggplot(., aes(x=diff))+
+        geom_density(fill = 'gray60',
+                     color = 'grey60',
+                     alpha = 0.9)+
+      #  geom_histogram(bins = 100)+
+        theme_phil()+
+        xlab("Games Owned - Games Rated")
+        
+```
+
 How do the users compare in their ratings to the average ratings on BoardGameGeek?
 
-```{r user ratings vs average, fig.height=8, fig.width=10}
+```{r user ratings vs average, fig.height=20, fig.width=10}
 
 set.seed(1999)
-collections_info %>%
+samp_ratings = collections_info %>%
         filter(!(is.na(rating))) %>%
-        ggplot(., aes(x=rating,
-                      size = usersrated,
-                      label = name,
-                      y=average))+
-        geom_jitter(alpha=0.1,
-                    width = 0.1,
-                    height = 0.1)+
-        # geom_text(check_overlap = T,
-        #           size = 2.5,
-        #           alpha=0.8)+
-        theme_phil()+
-        coord_cartesian(xlim = c(0,10),
-                        ylim = c(0, 10))+
-        geom_smooth(show.legend=F)+
-        theme(legend.title = element_text())+
-        guides(size = guide_legend(title.position = 'top'))
+        filter(type == 'boardgame') %>% 
+        group_by(game_id) %>%
+        mutate(sample_mean = mean(rating),
+               sample_median = median(rating),
+               sd_ratings = sd(rating),
+               sample_ratings = n()) %>%
+        filter(sample_ratings > 14) %>%
+        ungroup() %>%
+        arrange(desc(sample_mean)) 
+
+sum_ratings= collections_info %>%
+        filter(!(is.na(rating))) %>%
+        filter(type == 'boardgame') %>% 
+        group_by(game_id, name) %>%
+        summarize(sample_mean = mean(rating),
+                  sd_ratings = sd(rating),
+                  sample_median = median(rating),
+                  sample_ratings = n(),
+                  .groups = 'drop') %>%
+        filter(sample_ratings > 9) %>%
+        arrange(desc(sample_mean))
         
+# top 
+samp_ratings %>%
+        filter(game_id %in% (sum_ratings %>% 
+                       head(100) %>%
+                       pull(game_id))) %>%
+        ggplot(., aes(y=reorder(name, sample_mean),
+                      x=rating))+
+        stat_density_ridges(alpha=0.8,
+                            color = 'white',
+                            quantile_lines = TRUE,
+                            quantile_fun = mean,
+                            quantiles = 2)+
+        theme_phil()+
+        theme(panel.grid.minor = element_blank(),
+              panel.grid.major = element_blank())+
+        coord_cartesian(xlim = c(0, 11))
+```
+
+Lowest
+
+```{r lowest rated, fig.height=20, fig.width=10}
+
+# bottom
+samp_ratings %>%
+        filter(game_id %in% (sum_ratings %>% 
+                       tail(100) %>%
+                       pull(game_id))) %>%
+        ggplot(., aes(y=reorder(name, sample_mean),
+                      x=rating))+
+        stat_density_ridges(alpha=0.8,
+                            color = 'white',
+                            quantile_lines = TRUE,
+                            quantile_fun = mean,
+                            quantiles = 2)+
+        theme_phil()+
+        theme(panel.grid.minor = element_blank(),
+              panel.grid.major = element_blank())+
+        coord_cartesian(xlim = c(0, 11))
+
+```
+
+Most polarizing
+
+```{r lowest rated, fig.height=20, fig.width=10}
+
+
+samp_ratings %>%
+        filter(game_id %in% (sum_ratings %>% 
+                                     arrange(desc(sd_ratings)) %>%
+                                     head(100) %>%
+                                     pull(game_id))) %>%
+        ggplot(., aes(y=reorder(name, sd_ratings),
+                      x=rating))+
+        stat_density_ridges(alpha=0.8,
+                            color = 'white',
+                            quantile_lines = TRUE,
+                            quantile_fun = mean,
+                            quantiles = 2)+
+        theme_phil()+
+        theme(panel.grid.minor = element_blank(),
+              panel.grid.major = element_blank())+
+        coord_cartesian(xlim = c(0, 11))+
+        theme(axis.text.y = element_text(size=12))+
+        ggtitle("Which Games are the Most Polarizing?",
+                subtitle = str_wrap("Displaying distributions of ratings for games with highest variance in sample of user collections. Filtering to games with at least 15 ratings.", 125))
+
+
 ```
 
 Games most frequently owned
@@ -339,6 +644,84 @@ collections_info %>%
         theme_phil()+
         coord_flip()+
         theme(panel.grid.major = element_blank())
+
+```
+
+What are the most frequent combinations of games in collections?
+
+```{r make polot, fig.height=10, fig.width=10}
+spread_games = games_flattened %>%
+        mutate(game_id = as.integer(game_id)) %>%
+        filter(!(game_id %in% (game_expansions$expansion_id))) %>%
+        select(yearpublished, game_id, name) %>%
+        left_join(.,
+                  collections_info %>%
+                          mutate(game_id = as.integer(game_id)) %>%
+                          select(username, game_id, own, name) %>%
+                          filter(own==1) %>%
+                          mutate(username = paste("own", username, sep="_")) %>%
+                          pivot_wider(id_cols=c("game_id", "name"),
+                                      names_from = c("username"),
+                                      values_from = c("own")) %>%
+                          mutate_if(is.numeric, replace_na, 0),
+                  by = c("game_id", "name")
+                  ) %>%
+        mutate_if(is.numeric, replace_na, 0)
+        
+```
+
+```{r upset plot, fig.height=20, fig.width=10}
+
+spread_games %>%
+        select(-yearpublished, -game_id, -name)
+        mutate_if(is.numeric, as.integer) %>%
+        as.data.frame() %>%
+        upset(.,
+              nsets = 25,
+              show.numbers = F,
+              text.scale = 3,
+              point.size = 4,
+              line.size=1.5,
+              #    nintersects = 50,
+              mb.ratio = c(.4, .6),
+              mainbar.y.label = "# of Games Played \n by Combination of User",
+              sets.x.label = "# of Games by User",
+              order.by = "freq")
+
+```
+
+
+collections_info %>%
+        filter(type == 'boardgame') %>%
+        group_by(game_id) %>%
+        mutate(users_own = sum(own)) %>%
+        arrange(desc(users_own))
+        ungroup() %>%
+        select(username, date, game_id, name, own, users_own)
+        select(-name, -users_own, -date) %>%
+        spread(game_id, own) %>%
+        mutate_if(is.numeric, replace_na, 0) %>%
+        filter(`13` == 1)
+
+# flip tp upset
+spread_names %>%
+        select(-username) %>%
+        mutate_if(is.numeric, as.integer) %>%
+        as.data.frame() %>%
+        upset(.,
+              nsets = 25,
+              show.numbers = F,
+              text.scale = 3,
+              point.size = 4,
+              line.size=1.5)
+              #    nintersects = 50,
+              mb.ratio = c(.4, .6),
+              mainbar.y.label = "# of Games Played \n by Combination of User",
+              sets.x.label = "# of Games by User",
+              order.by = "freq")
+
+
+    
 
 ```
 
