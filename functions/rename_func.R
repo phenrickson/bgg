@@ -25,6 +25,7 @@ function(x) {
         x = gsub("Movies Tv", "Movies TV", x)
         x = gsub("Auctionbidding", "Auction Bidding", x)
         x = gsub("Postnapoleonic", "Post Napoleonic", x)
+        x = gsub("Paperandpencil", "Paper and Pencil", x)
         x
         
 }

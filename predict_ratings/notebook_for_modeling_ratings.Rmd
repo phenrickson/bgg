@@ -12,7 +12,7 @@ params:
   min_ratings: 200
 ---
 
-```{r global settings, echo=F, warning=F, message=F}
+```{r global settings, echo=F, warning=F, message=F, results='hide'}
 
 knitr::opts_chunk$set(echo = F,
                       error=F,
@@ -29,7 +29,7 @@ source(here::here("functions/theme_phil.R"))
 
 ```
 
-```{r flextable settings, echo=F, warning=F, message=F}
+```{r flextable settings, echo=F, warning=F, message=F, results='hide'}
 
 library(webshot2)
 library(flextable)
@@ -43,7 +43,7 @@ set_flextable_defaults(theme_fun = theme_alafoli,
 
 ```
 
-```{r connect to big query}
+```{r connect to big query, warning=F, message=F, results='hide'}
 
 library(bigrquery)
 
@@ -539,6 +539,47 @@ game_publishers %>%
         bg(., i = ~ publisher_id %in% publisher_list,
            bg = 'deepskyblue1') %>%
         set_caption(., caption = "Publishers with most games in training set. Blue indicates that publisher feature is included in recipe.")
+
+```
+
+Let's look for the publishers that I've 'white listed'.
+
+```{r plot publishers on white list, fig.width=10}
+
+# filter to games with publishers that had at least 300 games
+data_inspection %>%
+        left_join(., game_publishers,
+            by = "game_id") %>%
+        select(timestamp, game_id, name, publisher_id, publisher, everything()) %>%
+        filter(!is.na(publisher)) %>%
+        group_by(publisher_id, publisher, outcome_type) %>%
+        mutate(median_rating = median(outcome),
+         n_games = n_distinct(game_id)) %>%
+        ungroup() %>%
+        filter(n_games > min_games) %>%
+        filter(publisher_id %in% publisher_list) %>%
+        ggplot(., aes(x=reorder_within(x = publisher, 
+                               within = outcome_type,
+                               by = median_rating),
+                      y=outcome))+
+        geom_jitter(width=0.2,
+              height=0,
+              alpha=0.25)+
+        scale_x_reordered()+
+        facet_wrap(~outcome_type,
+                   scales = "free")+
+        coord_flip()+
+        theme_phil()+
+        geom_boxplot(alpha=0.75,
+               outlier.size=0)+
+        xlab("Publisher")+
+        ggtitle("Rating by Publisher",
+          subtitle = str_wrap(paste("Displaying ratings by publisher for all games published through", params$end_training_year, "for publishers with at least", min_games, "games.", sep=" "), 125))+
+  theme(plot.title = element_text(size=12),
+        plot.subtitle =  element_text(size=10),
+        axis.text.y = element_text(size=8))+
+        my_caption
+
 
 ```
 
@@ -2440,7 +2481,7 @@ oos_preds %>%
 ```
 
 
-## Validating the Models
+# Validating the Models
 
 We'll recall our set aside dataset with games published after `r params$end_training_year`, filter to `r params$end_training_year+1` and bake it with our previously trained recipe. This will serve as our primary validation set.
 
@@ -2514,7 +2555,7 @@ valid_preds = ratings_models %>%
 ```
 
 
-### Results: `r params$end_training_year + 1`
+## Results: `r params$end_training_year + 1`
 
 We'll evaluate how the models did in predicting `r params$end_training_year + 1`
 
@@ -2662,7 +2703,7 @@ Hmm. So it would seem that isn't the case, the models generally behave pretty si
 
 One thing to consider is whether we should just be predicting a categorical variable with labels for 'top game', 'bad game', rather than trying to directly estimate the rating.
 
-#### Full Table of `r params$end_training_year+1` Predictions
+### Full Table of `r params$end_training_year+1` Predictions
 
 We'll look at the predicted ratings and the percentiles from the model for the geek rating to see how they compared to the actual.
 
@@ -2998,7 +3039,7 @@ valid_preds %>%
         
 ```
 
-### Hits and Misses of `r params$end_training_year +1`
+## Hits and Misses of `r params$end_training_year +1`
 
 Rather than focusing on the precise value of the predicted rating from the models, let's step back and look at this as a classification problem. How many of the top hit was the model able to identify? How many did it miss? How many games did it predict would be hits and haven't been (at least, not yet)?
 
@@ -3297,7 +3338,7 @@ test_preds = ratings_models %>%
 ```
 
 
-### Predicting `r params$end_training_year+2`
+## Predicting `r params$end_training_year+2`
 
 ```{r predict 2020 table, warning=F, message=F}
 
@@ -3350,7 +3391,7 @@ preds_year %>%
 ```
 
 
-## Predicting `r params$end_training_year + 3` and On
+## Predicting `r params$end_training_year + 3`
 
 ```{r predict 2021 table, warning=F, message=F}
 
