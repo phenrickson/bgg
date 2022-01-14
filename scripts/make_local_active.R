@@ -248,6 +248,7 @@ models_complexity = readr::read_rds(here::here("predict_complexity/models", most
 recipe_complexity = readr::read_rds(here::here("predict_complexity/models", most_recent_recipe_complexity))
 models_ratings = readr::read_rds(here::here("predict_ratings/models", most_recent_models_ratings))
 recipe_ratings = readr::read_rds(here::here("predict_ratings/models", most_recent_recipe_ratings))
+games_datasets_complexity = readr::read_rds(here::here("predict_complexity/data", most_recent_games_datasets_complexity))
 games_datasets_ratings = readr::read_rds(here::here("predict_ratings/data", most_recent_games_datasets_ratings))
 
 # load others
@@ -287,9 +288,12 @@ readr::write_rds(models_complexity, file = here::here("active/models_complexity.
 readr::write_rds(recipe_complexity, file = here::here("active/recipe_complexity.Rdata"))
 readr::write_rds(models_ratings, file = here::here("active/models_ratings.Rds"))
 readr::write_rds(recipe_ratings, file = here::here("active/recipe_ratings.Rdata"))
+readr::write_rds(games_datasets, file = here::here("active/games_datasets.Rdata"))
 readr::write_rds(games_datasets_ratings, file = here::here("active/games_datasets_ratings.Rdata"))
+readr::write_rds(games_datasets_complexity, file = here::here("active/games_datasets_complexity.Rdata"))
 
 print("files loaded to active")
 
 # remove
 rm(list=ls())
+
