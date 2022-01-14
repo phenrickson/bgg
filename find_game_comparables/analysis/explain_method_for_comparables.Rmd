@@ -1,0 +1,1741 @@
+---
+title: "Methodology for Comparing and Recommending Board Games"
+author: "Phil Henrickson"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+        toc: true
+        toc_depth: 2
+        number_sections: true
+---
+
+```{r global settings, echo=F, warning=F, message=F, results = 'hide'}
+
+knitr::opts_chunk$set(echo = F,
+                      error=F,
+                      dev="png",
+                      fig.width = 10,
+                      fig.height = 6)
+
+options(knitr.duplicate.label = "allow")
+
+options(scipen=999)
+
+source(here::here("scripts/load_packages.R"))
+source(here::here("functions/theme_phil.R"))
+
+```
+
+
+```{r load in necessary pieces, warning=F, message=F}
+
+# load function
+source(here::here("functions/get_game_record.R"))
+source(here::here("functions/baverage_func.R"))
+source(here::here("functions/average_func.R"))
+source(here::here("functions/avgweight_func.R"))
+source(here::here("functions/rename_func.R"))
+
+# load active files
+unsupervised_obj_components = 
+        readr::read_rds(here::here("active", "unsupervised_obj_components.Rdata"))
+
+unsupervised_neighbors = 
+        readr::read_rds(here::here("active", "unsupervised_neighbors.Rdata")) 
+
+recipe_prep = 
+        readr::read_rds(here::here("active", "unsupervised_recipe_prep.Rdata"))
+
+# games_flattened = 
+#         readr::read_rds(here::here("active", "games_flattened.Rdata"))  %>%
+#         select(game_id,
+#                name,
+#                yearpublished,
+#                average,
+#                baverage,
+#                avgweight,
+#                playingtime,
+#                usersrated,
+#                minplayers,
+#                maxplayers)
+
+```
+
+```{r big query for active games, warning=F, message=F}
+
+library(bigrquery)
+
+# get project credentials
+PROJECT_ID <- "gcp-analytics-326219"
+BUCKET_NAME <- "test-bucket"
+
+# authorize
+bq_auth(email = "phil.henrickson@aebs.com")
+
+# establish connection
+bigquerycon<-dbConnect(
+        bigrquery::bigquery(),
+        project = PROJECT_ID,
+        dataset = "bgg"
+)
+
+# query table
+active_games<-DBI::dbGetQuery(bigquerycon, 
+                              'SELECT * FROM bgg.active_games_daily')
+
+# create caption for plots
+my_caption = list(labs(caption = paste(paste("Data from boardgamegeek.com as of", max(as.Date(active_games$timestamp))),
+                        paste("Data and analysis at github.com/phenrickson/bgg"), sep="\n")))
+
+```
+
+
+# Background
+
+This report summarizes and explains my methodology for examining a boardgame and identifying **its most comparable games using data from boardgamegeek.com**. To summarize, I use a dimension reduction method (PCA) to learn the main points of variation in data about games from boardgamegeek. I then compute the distance Manhattan between all games based on their values on the first ten principal components. Games that are close to each other are said to be *neighbors*.
+
+To see the results of this analysis in action, go to... for an interactive report allowing the end user to select a game and see its neighbors in an interactive fashion.
+
+# Motivation {-}
+
+'Oh, you haven't played a lot of games but you like Catan? You should check out Concordia.'
+
+'You like Betrayal at the House on the Hill? You should check out the other games in that series, like Betrayal at Baldur's Gate or Betrayal Legacy. Or, you might enjoy something like Mansions of Madness or Dead of Winter.'
+
+'Your favorite game is High Frontier 4 All? Uh, would you look at that, I'm late for a dental appointment.'
+
+If you've been in the hobby of board games for a while, you probably have a mental mapping of games that you use to make recommendations to friends, family, and colleagues. If someone mentions that they're looking for a new game, you generally ask for some examples of games they like. Based on what they tell you, you start thinking about the various features of games (complexity, playing time, theme, price), and then try to identify something that will be similar to what they told you.
+
+You are, in other words, a recommendation engine. And probably a pretty darn good one. You receive an input, push it through your mental map (a function), and return an output. Over time, you've fine tuned your function and have gotten pretty good at ensuring that output is pretty useful.
+
+But you do have some limits. If someone mentions a game you've never heard of before, it will be difficult to place it on your mental map. You also, presumably, have other things going on in your life (showering, eating, cleaning the cat litter) that prevent you from being on demand to to recommend new games to anyone who asks. And as good as you are, you might also not recognize some patterns that exist between games - as sharp as your mental mapping might be, it's hard to take into account all of the information that exists and recommend the best possible fit.
+
+Fortunately for us, computers have nothing better to do and can process lots of information whenever we want (for now at least; see The Matrix). Rather than relying on our mental map, we can try to use data collected about board games in order to recreate what we are currently doing manually.
+
+# How do we find similar games?
+
+Finding similar games amounts to measuring the distance between games and identifying the ones that are closest to each other. But what dimensions should we be using to measure games? And how do we define the distance between them? 
+
+Let's start with a simple, uni-dimensional example. Let's say we have a universe of 26 games, each represented by a letter in the alphabet. 
+
+```{r create uni dimnesionsal, fig.height=2}
+
+alphabet = toupper(letters) %>%
+        as_tibble() %>%
+        mutate(x = 1:nrow(.))
+
+ggplot(alphabet, aes(x=x, y=0)) +
+  geom_line(size=1) +
+  geom_point(shape = 108, size = 5) +
+  geom_text(aes(label=value,hjust=0.5, vjust=-2))+
+  geom_text(aes(label=x),hjust=.5, vjust=2.5) +
+  theme_void()+
+  theme(axis.line.y=element_blank(),
+          axis.text.y=element_blank(),
+          axis.ticks.y=element_blank(),
+          axis.title.y=element_blank(),
+          panel.grid.minor.y=element_blank(),
+          panel.grid.major.y=element_blank())
+
+```
+
+In this wildly simplified example we have one discrete dimension where our only unit of measurement is the number of spaces between letters. (We'll assume that the dimensions ends at A and Z; it doesn't wrap around. There's a mathematical term for this, but I won't pretend to be learned in speaking like a mathematician or game theorist when it comes to these things, I was a humanities major dammit.)
+
+In this case, Game X's nearest neighbors are games W and Y, as they're both one space away. We can find the distance between every game in this way:
+
+```{r find distance between every letter}
+
+col_func<- function(x) {
+
+breaks<-seq(0, 15, 1)
+
+# breaks = weight_deciles
+colorRamp=colorRampPalette(c("deepskyblue2", "white"))
+col_palette <- colorRamp(length(breaks))
+mycut <- cut(x,
+breaks = breaks,
+include.lowest = TRUE,
+right=T,
+label = FALSE)
+col_palette[mycut]
+
+}
+
+# get distance betwen
+alphabet_dist = alphabet %>%
+        select(x) %>%
+        as.matrix() %>%
+        dist(method = "manhattan", diag=F) %>%
+        as.matrix(diag=F) %>%
+        as.data.frame() %>%
+        set_colnames(toupper(letters)) %>%
+        set_rownames(toupper(letters))
+        
+# flextable
+alphabet_dist %>%
+        rownames_to_column(".") %>%
+        flextable() %>%
+        flextable::autofit() %>%
+        set_caption("Distances between units, unidimensional") %>%
+        bg(., j = LETTERS,
+           bg = col_func)
+        
+
+```
+
+To find similar games, we just find the ones that minimize the distance between them. If you like game X, we'll recommend W and Y (and then V and Z and then U...):
+
+```{r example of neighbors for alphabet}
+
+alphabet_dist %>%
+        rownames_to_column("letter") %>%
+        gather('closest','dist',-letter) %>%
+        filter(letter == 'X') %>%
+        filter(dist !=0) %>%
+        arrange(dist) %>%
+        flextable() %>%
+        flextable::autofit() %>%
+        bg(., j=c("dist"),
+           bg = col_func)
+
+```
+
+But we're not going to recommend you game A, at least not to start, as it is the furthest away. Our method for finding similar units amounts to this:
+
+1. Identify dimension (place in the alphabet) on which to place units
+2. Place all units on dimension
+3. Measure distance between units
+4. For a given unit, select its nearest units
+
+There is an additional step we'd like to get to, gaining feedback based on the selection of units, but for now we'll keep it simple and be satisfied if we can identify neighbors.
+
+# Finding Similar Games in One Dimension
+
+Let's stay in one dimension, but switch over to data about board games. What dimension do we typically use to group and evaluate games? My mind goes immediately to the idea of **complexity**: how complicated is it to learn, how long will it take to play, how many different actions are there, etc. 
+
+All of us probably bin our collection on this dimension already: we all probably have an area in our collection for 'games we would play with non gamers' as well as another area for 'games we probably can only play with our brother who lives across the country and has the same appetite as us for learning and playing really complex games'. We all do that, right?
+
+At any rate, boardgamegeek has an averageweight measure we can use to proxy for complexity and place all games on one dimension. We can plot the distribution of game complexity and notice that most games tend to fall around a 2 on the complexity rating, which ranges from 1 (very simple) to 5 (very complex).
+
+```{r plot distribution of complexity, warning=F, message=F}
+
+active_games %>%
+        filter(!is.na(yearpublished)) %>%
+        mutate(median_avgweight = median(avgweight, na.rm=T)) %>%
+        ggplot(., aes(x=avgweight))+   #     geom_density()
+        geom_histogram(bins=80, color = 'white', fill = 'grey60')+
+        theme_phil()+
+     #   geom_vline(aes(xintercept = median_avgweight))+
+        my_caption
+
+```
+
+As before, this is just one dimension on which we could compare games. We'll take a sample of 25 games and place them on this dimension of complexity.
+
+```{r get sample and place, warning=F,fig.height=4, message=F}
+
+set.seed(9)
+samp_games = active_games %>%
+        filter(rank <= 500) %>%
+        filter(!is.na(avgweight)) %>%
+        filter(!is.na(yearpublished)) %>%
+        sample_n(10)
+
+samp_games %>%
+        mutate(avgweight = round(avgweight, 1)) %>%
+        ggplot(., aes(x=avgweight, y=0)) +
+        geom_line(size=1) +
+        geom_point(shape = 108, size = 4) +
+        geom_text_repel(aes(label=name),
+                        size =3,
+                        max.overlaps = 8,
+                        nudge_y = .01)+
+        geom_text(aes(label=avgweight),
+                  hjust=.5, 
+                  size=3,
+                  vjust=2.5) +
+      theme_phil()+
+          theme(axis.line.y=element_blank(),
+                  axis.text.y=element_blank(),
+                  axis.ticks.y=element_blank(),
+                  axis.title.y=element_blank(),
+                  panel.grid.minor.y=element_blank(),
+                  panel.grid.major.y=element_blank(),
+                panel.grid.minor = element_blank(),
+                panel.grid.major = element_blank())
+        
+```
+
+Now, with this in mind, we can measure the distance between any game by simply subtracting their distance from each other in terms of complexity. We'll follow the same process as above, but now computing it based on some real data.
+
+```{r find distance between games}
+
+dist_func<- function(x) {
+
+        breaks<-seq(0, 1.5, 0.1)
+        # breaks = weight_deciles
+        colorRamp=colorRampPalette(c("deepskyblue2", "white"))
+        col_palette <- colorRamp(length(breaks))
+        mycut <- cut(x,
+        breaks = breaks,
+        include.lowest = TRUE,
+        right=T,
+        label = FALSE)
+        col_palette[mycut]
+
+}
+
+set.seed(5)
+samp_games_dist = samp_games %>%
+        mutate(game_id = as.character(game_id)) %>%
+        select(name, avgweight) %>%
+        column_to_rownames("name") %>%
+        mutate_if(is.numeric, round, 2) %>%
+        dist(method = "manhattan") %>%
+        as.matrix() %>%
+        as.data.frame()
+
+
+samp_games_dist %>%
+        rownames_to_column(".") %>%
+        flextable() %>%
+        flextable::autofit() %>%
+        bg(., j = names(samp_games_dist[,-1]),
+           bg = dist_func)
+
+
+```
+
+So in this, Pandemic's nearest neighbors are, interestingly, another co operative game, followed by some lighter, more framily friendly strategy games.
+
+```{r filter to neighbor within games}
+
+samp_games_dist %>%
+        rownames_to_column("game") %>%
+        gather('closest','dist',-game) %>%
+        filter(game == 'Pandemic') %>%
+        filter(dist !=0) %>%
+        arrange(dist) %>%
+        flextable() %>%
+        flextable::autofit() %>%
+        bg(., j = c("dist"),
+           bg = dist_func)
+
+```
+
+Whereas for Teotihuacan, it's closest neighbors are the other more complex games in the sample.
+
+```{r set games for example 2 uni}
+
+samp_games_dist %>%
+        rownames_to_column("game") %>%
+        gather('closest','dist',-game) %>%
+        filter(game == 'Teotihuacan: City of Gods') %>%
+        filter(dist !=0) %>%
+        arrange(dist) %>%
+        flextable() %>%
+        flextable::autofit() %>%
+        bg(., j = c("dist"),
+           bg = dist_func)
+
+```
+
+As before, we are following a pretty simple approach.
+
+1. Identify dimension (complexity) on which to place games
+2. Place games on dimension
+3. Measure distance between games
+4. For a given game, return its nearest neighbors
+
+This approach looks pretty good if we're looking at a small sample of games, what happens if use complexity alone to find the nearest neighbors among all games on BGG?
+
+```{r get dist for all active games}
+
+set.seed(5)
+active_games_dist = active_games %>%
+        filter(!is.na(avgweight)) %>%
+        filter(!is.na(yearpublished)) %>%
+        mutate(game_id = as.character(game_id)) %>%
+        mutate(name_id = paste(name, game_id, sep="_")) %>%
+        select(name_id, avgweight) %>%
+        column_to_rownames("name_id") %>%
+        dist(method = "manhattan") %>%
+        as.matrix() %>%
+        as.data.frame()
+
+```
+
+This means, if you like Inis, you'll like... 
+
+```{r full games comparing on complexity, warning=F, message=F}
+
+active_games_dist %>%
+        rownames_to_column("game") %>%
+        filter(grepl("Inis", game)) %>%
+        gather('closest','dist',-game) %>%
+        separate(game, into = c("game", "game_id"), sep="_") %>%
+        separate(closest, into =c("closest", "closest_id"), sep="_") %>%
+        mutate(dist = round(dist, 3)) %>%
+        filter(!is.na(dist)) %>% 
+        filter(closest != 'Inis') %>%
+        group_by(game) %>% 
+        arrange(dist) %>% 
+        slice_min(dist, n=10, with_ties = F) %>%
+        flextable() %>%
+        flextable::autofit() %>%
+        bg(., j = c("dist"),
+           bg = dist_func) %>%
+                set_caption("Nearest neighbors for Inis using only complexity")
+```
+
+And if you like War of the Ring, you'll like...
+
+```{r example 2 from uni complexity, warning=F, message=F}
+
+active_games_dist %>%
+        rownames_to_column("game") %>%
+        filter(grepl("War of the Ring: Second", game)) %>%
+        gather('closest','dist',-game) %>%
+        separate(game, into = c("game", "game_id"), sep="_") %>%
+        separate(closest, into =c("closest", "closest_id"), sep="_") %>%
+        mutate(dist = round(dist, 3)) %>%
+        filter(!is.na(dist)) %>% 
+        filter(closest != 'War of the Ring: Second Edition') %>%
+        group_by(game) %>% 
+        arrange(dist) %>% 
+        slice_min(dist, n=10, with_ties = F) %>%
+        flextable() %>%
+        flextable::autofit() %>%
+        bg(., j = c("dist"),
+           bg = dist_func) %>%
+        set_caption("Nearest neighbors for War of the Ring using only complexity")
+```
+
+If you're looking at this and going, 'this doesn't feel right, these games aren't that similar', then you've spotted the problem. We've followed the steps we outlined, it sounded well and good, but we've hit a snag at the all important next step:
+
+5. Examine nearest neighbors and evaluate the results.
+
+In other words, we're looking at the output and realizing that it isn't quite mapping to what we want. How do we even know what we want? How are we determining that? Our gut, mostly. Our theoretical concept in our heads of what it means for two games to be similar. If we think about our mental map, we typically think about board concepts like complexity, but also the theme, the mechanics in the game, etc.
+
+Right now, using only complexity, we're missing all of this other stuff that we use to compare games. Is Inis really similar to Chocolate Factory because they have a similar complexity rating? Is War of the Ring anything like an 18XX game?
+
+In order to get closer to our theoretical concept, we need to introduce some more data points about games. There are some other things we should think about, like the theme and setting of the game, what type of mechanics it uses, its player count. 
+
+```{r remove pieces from uni complexity}
+
+rm(active_games_dist)
+
+```
+
+
+# Finding Similar Games in Two Dimensions
+
+Let's add an additional dimension on which to compare games. Ideally, we'd like to have answers to two main questions about a game. How complex is it and how thematic is it? We have a measure of the first, but we don't really have a measure of the latter. We could in theory pick any dimensions on which to compare games, why am I caring about complexity and theme? It goes back to the measurement concept I have in my head, and how I think about comparing games. But in practice, we could compare games on any dimension. We have *a lot of features* on games, what should we compare them on?
+
+```{r query tables with game information}
+
+# general game info
+games_info<-DBI::dbGetQuery(bigquerycon, 
+                              'SELECT * FROM bgg.active_games_info')
+
+# game categories
+game_categories<-DBI::dbGetQuery(bigquerycon, 
+                              'SELECT 
+                              a.game_id,
+                              b.category_id,
+                              b.category
+                              FROM bgg.game_categories a
+                               LEFT JOIN bgg.category_ids b 
+                               ON a.category_id = b.category_id')
+
+# game mechanics
+game_mechanics<-DBI::dbGetQuery(bigquerycon, 
+                              'SELECT 
+                              a.game_id,
+                              b.mechanic_id,
+                              b.mechanic
+                              FROM bgg.game_mechanics a
+                               LEFT JOIN bgg.mechanic_ids b 
+                               ON a.mechanic_id = b.mechanic_id')
+
+# game publishers
+game_publishers<-DBI::dbGetQuery(bigquerycon, 
+                              'SELECT 
+                              a.game_id,
+                              b.publisher_id,
+                              b.publisher
+                              FROM bgg.game_publishers a
+                               LEFT JOIN bgg.publisher_ids b 
+                               ON a.publisher_id = b.publisher_id')
+
+# game designers
+game_designers<-DBI::dbGetQuery(bigquerycon, 
+                              'SELECT 
+                              a.game_id,
+                              b.designer_id,
+                              b.designer
+                              FROM bgg.game_designers a
+                               LEFT JOIN bgg.designer_ids b 
+                               ON a.designer_id = b.designer_id')
+
+# game artists
+game_artists<-DBI::dbGetQuery(bigquerycon, 
+                              'SELECT 
+                              a.game_id,
+                              b.artist_id,
+                              b.artist
+                              FROM bgg.game_artists a
+                               LEFT JOIN bgg.artist_ids b 
+                               ON a.artist_id = b.artist_id')
+
+```
+
+```{r use function to create training set}
+
+source(here::here("functions/combine_and_split_bgg_datasets.R"))
+
+# publisher list
+publisher_list = 
+        readr::read_rds(here::here("active/publisher_list.Rdata"))
+
+# designers
+top_designers = 
+        readr::read_rds(here::here("active/top_designers.Rdata"))
+
+# artists
+top_artists = 
+        readr::read_rds(here::here("active/top_artists.Rdata"))
+
+games_datasets= combine_and_split_bgg_datasets(datasets_list = list("active_games" = active_games,
+                                                                    "game_categories" = game_categories,
+                                                                    "game_designers" = game_designers,
+                                                                    "game_mechanics" = game_mechanics,
+                                                                    "game_publishers" = game_publishers,
+                                                                    "game_artists" = game_artists),
+                        min_users = 200,
+                        year_split = 2020,
+                        publisher_list = publisher_list,
+                        top_designers = top_designers,
+                        top_artists = top_artists)
+
+# use the training set
+games_train = games_datasets$train 
+games_test = games_datasets$test
+
+# create recipe to prep the data for unsupervised learning
+recipe_prep<- recipe(~ .,
+                    x = games_train) %>%
+        update_role(all_numeric(),
+              new_role = "predictor") %>%
+        update_role(timestamp,
+              yearpublished,
+                usersrated,
+                game_id,
+                name,
+                average,
+                baverage,
+                new_role = "id") %>%
+        step_filter(!is.na(yearpublished)) %>%
+        step_filter(cat_collectible_components !=1 &
+              cat_expansion_for_basegame != 1) %>% # remove specific categories that count expansions
+#  step_filter(yearpublished > 1900) %>%
+  # step_mutate(published_prior_1900 = case_when(yearpublished<1900 ~ 1,
+  #                                              TRUE ~ 0)) %>%
+  # step_mutate(yearpublished = case_when(yearpublished <= 1900 ~ 1900,
+  #                                              TRUE ~ as.numeric(yearpublished))) %>% # truncate yearpublished
+ # step_mutate(years_since_published = as.numeric(year(Sys.Date()))-yearpublished) %>%
+  step_impute_median(avgweight,
+                            minplayers,
+                            maxplayers,
+                            playingtime,
+                            minage) %>% # medianimpute numeric predictors
+  step_mutate(minplayers = case_when(minplayers < 1 ~ 1,
+                                             minplayers > 10 ~ 10, # truncate
+                                             TRUE ~ minplayers),
+              maxplayers = case_when(maxplayers < 1 ~ minplayers,
+                                             maxplayers > 20 ~ 20,
+                                             TRUE ~ maxplayers)) %>% # truncate player range
+  step_mutate(time_per_player = playingtime/ maxplayers) %>% # make time per player variable
+  step_mutate_at(starts_with("cat_"),
+                   fn = ~ replace_na(., 0)) %>%
+  step_mutate_at(starts_with("mech_"),
+                   fn = ~ replace_na(., 0)) %>%
+  step_mutate_at(starts_with("des_"),
+                   fn = ~ replace_na(., 0)) %>%
+  step_mutate_at(starts_with("art_"),
+                   fn = ~ replace_na(., 0)) %>%
+  step_rm(starts_with("art_"),
+          starts_with("des_"),
+          starts_with("pub_")) %>%
+  step_mutate(number_mechanics = rowSums(across(starts_with("mech_"))),
+              number_categories = rowSums(across(starts_with("cat_")))) %>%
+  step_log(playingtime,
+           time_per_player,
+           offset = 1) %>%
+  step_zv(all_predictors()) %>%
+        step_corr(all_predictors(),
+                    threshold = 0.99) %>%
+  step_nzv(all_predictors(),
+           freq_cut = 150/1)
+
+# normalize
+recipe_norm_prep<-recipe_prep %>%
+#  step_poly(number_mechanics, degree = 2) %>%
+  step_normalize(all_predictors())
+
+# pca 
+recipe_pca = recipe_prep %>%
+        step_normalize(all_numeric_predictors()) %>%
+        step_pca(all_numeric_predictors(), id = "pca",
+             num_comp = 500) %>% 
+        prep(strings_as_factor=F)
+ 
+# summary of recipe
+summary(recipe_prep)
+
+# bake train with prep
+baked_train = recipe_prep %>%
+        prep(games_train, strings_as_factor = F) %>%
+        bake(new_data = NULL) 
+
+# bake train with normalization
+baked_train_norm= recipe_norm_prep %>%
+        prep(games_train, strings_as_factor = F) %>%
+        bake(new_data = NULL) 
+
+```
+
+
+```{r corrplot, fig.height=10, fig.width=10}
+
+baked_train %>%
+        select_if(is.numeric) %>%
+        select(-game_id, -average, -baverage, -usersrated, -yearpublished) %>%
+        cor() %>%
+        ggcorrplot(hc.order = TRUE, outline.col = "white")+
+        theme(axis.text.x = element_text(size = 4),
+              axis.text.y = element_text(size = 4))
+
+
+```
+
+Clearly, we have many dimensions on which we might compare games. We could pick out a few that we think matter and focus on them. Or, we could take another approach and try to reduce the dimensionality of this dataset while preserving the variation. That is, we can attempt to find linear combinations of the features we have that maximize the variation. This is a method called principal components analysis.
+
+We'll bake our training set using the recipe with a PCA at the end.
+
+```{r bake melt and nest, warning=F, message=F, echo=T}
+
+# bake and run pca
+pca_rotation= recipe_pca %>%
+        prep(games_train, strings_as_factor = F) %>%
+        bake(new_data = NULL)  %>%
+        rename_all(funs(gsub("PC0", "PC", gsub("PC00", "PC", .))))
+
+# pca estimates
+pca_components = tidy(recipe_pca,
+                     id = "pca")
+
+# pca variance
+pca_variance = tidy(recipe_pca,
+                    id = "pca", type = "variance")
+
+```
+
+We can then look to see how much of the variation each principal component explains using what is called a scree plot.  In this case, we can see that the first principal component explains about 5% of the overall variation. The first 10 components or so look to explain about 25% of the overall variation.
+
+```{r scree plot}
+
+pca_variance %>%
+        filter(terms == 'percent variance' |
+           terms == 'cumulative percent variance') %>%
+        mutate(terms = factor(terms,
+                              levels = c("percent variance",
+                                         "cumulative percent variance"))) %>%
+        ggplot(., aes(x=component,
+                y=value))+
+        geom_col(fill = 'grey60',
+           color = NA)+
+        facet_wrap(terms ~.,
+             ncol =1,
+             scales = "free")+
+        theme_phil()
+
+```
+
+To get a sense of what this looks like, we can place every game by their loadings on the first two principal components.
+
+```{r pca two dimensions plot, fig.height=10, fig.width=10} 
+
+pca_rotation %>%
+        ggplot(., aes(x=PC1, 
+                label = name,
+                y=PC2))+
+        geom_point(alpha=0.5)+
+        geom_text(check_overlap = T,
+             size = 3,
+            position=position_jitter(width=0.2,height=0.2))+
+          theme_phil()+
+        my_caption+
+        xlab("First Principal Component")+
+        ylab("Second Principal Component")+
+        geom_vline(xintercept = 0,
+                   linetype = 'dashed')+
+        geom_hline(yintercept = 0,
+                   linetype = 'dashed')
+
+```
+
+This is a plot of every game in our training set by their positions on the first two principal components. What are these two components exactly? They are linear combinations of the features in our dataset that maximized the variance. 
+
+```{r component loadings for first components}
+
+pca_components %>%
+        filter(component == 'PC1') %>%
+          group_by(component) %>%
+          slice_max(., order_by = abs(value),
+                    n = 40) %>%
+          mutate(terms = rename_func(terms)) %>%
+          ggplot(., aes(x=value,
+                        fill = value,
+                        y = reorder_within(terms, by =value, within = component)))+
+          geom_col()+
+          scale_y_reordered()+
+          facet_wrap(. ~ component,
+                     ncol =2,
+                     scales = "free_y")+
+          theme_phil()+
+          my_caption+
+          scale_fill_viridis(option = "plasma",
+                             begin = 0.2,
+                             end = 0.8) +
+          ylab("feature")+
+          xlab("contribution")+
+          guides(fill = guide_colorbar(barwidth = 10))+
+                guides(fill = "none")
+
+```
+
+
+The first component looks to map to complexity - time per player, average weight, overall playing time, and number of mechanics all increase where your value on this component, while being a party game, a card game, having a higher number of players reduce your value. If we look at the top 10 and bottom 10 games on this component, we can get a sense of what's going on. 
+
+```{r sort component 1}
+
+top_and_bottom = 10
+        
+pca_rotation %>%
+        select(yearpublished, game_id, name, PC1) %>%
+        arrange(desc(PC1)) %>%
+        filter(row_number() > max(row_number()) - top_and_bottom | row_number() <= top_and_bottom) %>%
+        mutate_at(c("yearpublished", "game_id"),
+                 ~ as.character(.)) %>%
+        mutate_if(is.numeric, round, 3) %>%
+        flextable() %>%
+        autofit()
+
+```
+
+The first component seems to be a proxy for complexity. Average weight is a strong contributor to its value, but it also looks at some other things that we might expect to matter for the idea of 'how complex is a game'.
+
+```{r compare avgweight to PC1}
+ 
+# compare compoennt 
+baked_train %>%
+        left_join(., pca_rotation %>%
+                  select(game_id, starts_with("PC")),
+                  by = c("game_id")) %>%
+        ggplot(., aes(y=PC1, x=avgweight))+
+        geom_point(alpha=0.5)+
+        stat_cor(p.accuracy = 0.1,
+                 col = 'blue')+
+        geom_smooth(method = 'lm',
+                    formula = 'y ~ x')+
+        theme_phil()
+
+
+```
+
+If we zoom in on games at the highest values of the first principal component, we see some familar names.
+
+```{r zoom in on most complex, fig.height=10, fig.width=10}
+
+library(ggforce)
+
+pca_rotation %>%
+        ggplot(., aes(x=PC1, 
+                label = name,
+                y=PC2))+
+        geom_point(alpha=0.5)+
+        geom_text(check_overlap = T,
+             size = 3,
+            position=position_jitter(width=0.2,height=0.2))+
+         # theme_phil()+
+        my_caption+
+        xlab("First Principal Component")+
+        ylab("Second Principal Component")+
+        facet_zoom(xlim = c(5,14),
+                   zoom.size = 3)+
+        theme_bw(16)
+
+```
+
+But what about that second component? A game's value on this component increases with the number of categories the game has (not sure what to make of that just yet), variable player powers, storytelling, role playing, fighting, minatures, adventure, and decreases with if your game is econommic, has networks and trains, tile placement...
+
+```{r contributions to second principal compoent}
+
+pca_components %>%
+        filter(component == 'PC2') %>%
+          group_by(component) %>%
+          slice_max(., order_by = abs(value),
+                    n = 40) %>%
+          mutate(terms = rename_func(terms)) %>%
+          ggplot(., aes(x=value,
+                        fill = value,
+                        y = reorder_within(terms, by =value, within = component)))+
+          geom_col()+
+          scale_y_reordered()+
+          facet_wrap(. ~ component,
+                     ncol =2,
+                     scales = "free_y")+
+          theme_phil()+
+          my_caption+
+          scale_fill_viridis(option = "plasma",
+                             begin = 0.2,
+                             end = 0.8) +
+          ylab("feature")+
+          xlab("contribution")+
+          guides(fill = guide_colorbar(barwidth = 10))+
+        guides(fill = "none")
+
+```
+
+This looks to me like it's mapping to how thematic a game is, or to use a more antiquated term, how 'Ameritrashy' a game is. The games at the top of this component are all about storytelling, role playing, deception, while the bottom games are mostly tight economic affairs centered around trains.
+
+```{r top and bottom for second component}
+
+top_and_bottom = 10
+        
+pca_rotation %>%
+        select(yearpublished, game_id, name, PC2) %>%
+        arrange(desc(PC2)) %>%
+        filter(row_number() > max(row_number()) - top_and_bottom | row_number() <= top_and_bottom) %>%
+        mutate_at(c("yearpublished", "game_id"),
+                 ~ as.character(.)) %>%
+        mutate_if(is.numeric, round, 3) %>%
+        flextable() %>%
+        autofit()
+
+```
+
+What was the point of this exercise? The first two principal components look to map, somewhat loosely, to how complex a game is and how thematic it is. This means, we now have two dimensions on which we can compare games. If we go back to our small sample of games from earlier, we can plot them on these two dimensions
+
+```{r plot samp games on two dimensions}
+
+samp_ids = samp_games %>%
+        pull(game_id)
+
+# table
+pca_rotation %>%
+        filter(game_id %in% samp_ids) %>%
+        select(yearpublished, game_id, name, PC1, PC2) %>%
+        arrange(desc(PC1)) %>%
+        mutate_at(c("yearpublished", "game_id"),
+                 ~ as.character(.)) %>%
+        mutate_if(is.numeric, round, 2) %>%
+        flextable() %>%
+        autofit()
+
+# plot
+pca_rotation %>%
+        filter(game_id %in% samp_ids) %>%
+        ggplot(., aes(x=PC1, 
+                label = name,
+                y=PC2))+
+        geom_vline(xintercept = 0,
+                   linetype = 'dashed', 
+                   col = 'grey60')+
+        geom_hline(yintercept = 0,
+                   linetype = 'dashed',
+                   col = 'grey60')+
+        geom_point(alpha=0.5)+
+        geom_text_repel()+
+        # geom_text(check_overlap = T,
+        #      size = 3,
+        #     position=position_jitter(width=0.2,height=0.2))+
+          theme_phil()+
+        my_caption+
+        xlab("First Principal Component")+
+        ylab("Second Principal Component")+
+        coord_cartesian(xlim = c(-5, 15),
+                        ylim = c(-5, 15))
+
+```
+
+How do we find distance in two dimensions? Before we were able to just simply place them on one dimension. Now, we need to settle on a methodology for measuring distance. 
+
+There are actually a bunch of different ways we could measure the distance as we start to introduce more dimensions, but I'll focus on a couple of different ones.
+
+## Manhattan
+
+The first is Manhattan distance, which is basically what we've been doing before: what is the absolute distance between two units? What is the distance between Forgotten Waters and Patchwork? We can plot it on the graph.
+
+```{r manhattan distance for two games}
+
+# get coords for first example
+coords_1 = pca_rotation %>%
+        filter(game_id %in% samp_ids) %>%
+        filter(name == 'Forgotten Waters') %>%
+        select(game_id, name, PC1, PC2) %>%
+        mutate_if(is.numeric, round, 3)
+
+# get coords for second example
+coords_2 = pca_rotation %>%
+        filter(game_id %in% samp_ids) %>%
+        filter(name == 'Patchwork') %>%
+        select(game_id, name, PC1, PC2) %>%
+        mutate_if(is.numeric, round, 3)
+
+# manhattan dsitance
+abs_dist_12 = round(abs(coords_1$PC1 - coords_2$PC1)+
+        abs(coords_1$PC2 - coords_2$PC2), 3)
+
+# combine and plot      
+segment_plot = bind_rows(coords_1, 
+          coords_2) %>%
+        ggplot(., aes(x=PC1, 
+                label = name,
+                y=PC2))+
+        geom_vline(xintercept = 0,
+                   linetype = 'dashed', 
+                   col = 'grey60')+
+        geom_hline(yintercept = 0,
+                   linetype = 'dashed',
+                   col = 'grey60')+
+        geom_point(alpha=0.5)+
+        geom_text(vjust = -1)+
+        # geom_text(check_overlap = T,
+        #      size = 3,
+        #     position=position_jitter(width=0.2,height=0.2))+
+          theme_phil()+
+        my_caption+
+        xlab("First Principal Component")+
+        ylab("Second Principal Component")+
+        coord_cartesian(xlim = c(-5, 15),
+                        ylim = c(-5, 15))+
+        geom_step(color = 'blue')+
+        annotate("text",
+                 x = 2.5,
+                 y = -4,
+                 col = 'blue',
+                 label = coords_1$PC1-coords_2$PC1)+
+        annotate("text",
+                 x = 5,
+                 y = 0,
+                 col = 'blue',
+                 label = coords_1$PC2-coords_2$PC2)+
+        annotate("text",
+                 x=7,
+                 y = -3,
+                 label = paste("mannhattan distance",
+                               abs_dist_12,
+                               sep = "\n"),
+                 color = 'blue'
+                 )
+
+segment_plot
+
+```
+
+The total distance is simply the absolute length travelled between the points in this two dimensional space. We can do this for all of our sample games, as before.
+
+```{r get manhattan distance for games samp}
+
+dist_func<- function(x) {
+
+        breaks<-seq(0, 5, 0.1)
+        # breaks = weight_deciles
+        colorRamp=colorRampPalette(c("deepskyblue2", "white"))
+        col_palette <- colorRamp(length(breaks))
+        mycut <- cut(x,
+        breaks = breaks,
+        include.lowest = TRUE,
+        right=T,
+        label = FALSE)
+        col_palette[mycut]
+
+}
+
+samp_dist_manhattan = pca_rotation %>%
+        filter(game_id %in% samp_ids) %>%
+        select(yearpublished, game_id, name, PC1, PC2) %>%
+   #     mutate(name_id = paste(name, game_id, sep="_")) %>%
+  #      select(name_id, starts_with("PC")) %>%
+   #     column_to_rownames("name_id") %>%
+        select(name, starts_with("PC")) %>%
+        column_to_rownames("name") %>%
+        dist(., method = "manhattan") %>%
+        as.matrix() %>%
+        as.data.frame()
+
+samp_dist_manhattan %>%
+        rownames_to_column("name") %>%
+        mutate_if(is.numeric, round, 2) %>%
+        flextable() %>%
+        autofit() %>%
+        bg(., j = names(samp_dist_manhattan),
+           bg = dist_func)
+        
+
+```
+
+Also as before, we can then see which games emerge from this as the closest neighbors to Teotihucan.
+
+```{r get example 1 from samp manhtatan 2}
+
+samp_dist_manhattan %>%
+        rownames_to_column("game") %>%
+        gather('closest','dist',-game) %>%
+        filter(game == 'Teotihuacan: City of Gods') %>%
+        filter(dist !=0) %>%
+        arrange(dist) %>%
+        rename(manhattan = dist) %>%
+        mutate_if(is.numeric, round, 3) %>%
+        flextable() %>%
+        flextable::autofit() %>%
+        bg(., j = c("manhattan"),
+           bg = dist_func)
+
+```
+
+In this case, we actually end up with a pretty similar mapping of games. The most similar games to Teuotihaun are the other games that we would consider Euros, while the games with more players and player interaction (Forgotten Waters, Codenames: Pictures) are the furthest away.
+
+## Euclidean
+
+At this point you've probably also wondered, why not just calculate the direct distance between the two, as the bird flies? This is the Euclidean distance, which is just the hypotenuse of that triangle, which we can calculate with the ole Pythagorean theorem.
+
+```{r euclidean distance for two games}
+
+# euclidean distance
+euc_dist_12 = sqrt(
+        abs(coords_1$PC1 - coords_2$PC1)^2+
+                abs(coords_1$PC2 - coords_2$PC2)^2
+)
+
+
+# euc_dist_12 = bind_rows(coords_1,
+#                         coords_2) %>%
+#         select(PC1:PC2) %>%
+#         dist(., method = "euclidean") %>%
+#         as.vector()
+        
+        
+# combine and plot      
+segment_plot +
+        geom_segment(x = coords_2$PC1,
+                     y = coords_2$PC2,
+                     xend = coords_1$PC1,
+                     yend = coords_1$PC2,
+                     color = 'orange') +
+        annotate("text",
+                 x = -1,
+                 y = 1.5,
+                 label = paste("euclidean distance",
+                               round(euc_dist_12, 3),
+                               sep = "\n"),
+                 color = "orange")
+        
+```
+
+We can compare this to the Manhattan distance.
+
+```{r euclidaen distance for sample}
+
+z_func<- function(x) {
+
+        breaks<-seq(-5, 5, 0.1)
+        # breaks = weight_deciles
+        colorRamp=colorRampPalette(c("deepskyblue2", "white", "red"))
+        col_palette <- colorRamp(length(breaks))
+        mycut <- cut(x,
+        breaks = breaks,
+        include.lowest = TRUE,
+        right=T,
+        label = FALSE)
+        col_palette[mycut]
+
+}
+
+samp_dist_euclidean = pca_rotation %>%
+        filter(game_id %in% samp_ids) %>%
+        select(yearpublished, game_id, name, PC1, PC2) %>%
+   #     mutate(name_id = paste(name, game_id, sep="_")) %>%
+  #      select(name_id, starts_with("PC")) %>%
+   #     column_to_rownames("name_id") %>%
+        select(name, starts_with("PC")) %>%
+        column_to_rownames("name") %>%
+        dist(., method = "euclidean") %>%
+        as.matrix() %>%
+        as.data.frame()
+
+# bind together
+bind_rows(
+        samp_dist_manhattan %>%
+                rownames_to_column("game") %>%
+                gather('closest','dist',-game) %>%
+                filter(game == 'Teotihuacan: City of Gods') %>%
+                filter(dist !=0) %>%
+                arrange(dist) %>%
+                mutate(type = "manhattan"),
+        samp_dist_euclidean %>%
+                rownames_to_column("game") %>%
+                gather('closest','dist',-game) %>%
+                filter(game == 'Teotihuacan: City of Gods') %>%
+                filter(dist !=0) %>%
+                arrange(dist) %>%
+                mutate(type = "euclidean")) %>%
+        group_by(type) %>%
+     #   mutate(dist = rescale(dist, to =c(0,1))) %>%
+     #   mutate(dist = scale(dist, center=T, scale=T)) %>%
+        spread(type, dist) %>%
+        mutate_if(is.numeric, round, 3) %>%
+        arrange(euclidean) %>%
+        flextable() %>%
+        flextable::autofit()
+
+```
+
+As we would expect, in two dimensions the two approaches give us very similar results - I mean, this is simply because one measures the hypotenuse and the other measures the other two sides of the triangle. 
+
+## Cosine
+
+We could also compute the cosine similarity between the game, meaning the cosine of the angle between vectors. Rather than looking at the distance between them, think about the games as vectors starting out from the origin. We can then compute the angle, which we convert to radians, then we take the cosine. This yields a similarity score ranging from -1 (two vectors headed in completely opposite directions, at an angle of 180) to 1 (two vectors headed in the same direction, angle close to 0). Two vectors that are orthogonal (an angle of 90) will have a cosine similarity of 0.
+
+```{r compute cosine}
+
+library(lsa)
+library(REdaS)
+
+# get a matrix where each row is one game's values on the first two principal compnents
+pca_mat = pca_rotation %>%
+        filter(game_id %in% samp_ids) %>%
+        filter(name == 'Forgotten Waters' | name == 'Patchwork') %>%
+        select(yearpublished, game_id, name, PC1, PC2) %>%
+   #     mutate(name_id = paste(name, game_id, sep="_")) %>%
+  #      select(name_id, starts_with("PC")) %>%
+   #     column_to_rownames("name_id") %>%
+        select(name, starts_with("PC")) %>%
+        column_to_rownames("name") %>%
+        as.matrix()
+
+# compute it ourselves
+num= pca_mat[1,] %*% pca_mat[2,]
+denom = sqrt(sum(pca_mat[1,]^2)) * sqrt(sum(pca_mat[2,]^2))
+cos_ex = num/denom
+angle = rad2deg(acos(cos_ex))
+
+# compute it a faster way using the matrix
+Matrix <- as.matrix(pca_mat)
+sim <- Matrix / sqrt(rowSums(Matrix * Matrix))
+out <- sim %*% t(sim)
+angle
+
+# plot
+bind_rows(coords_1, 
+          coords_2) %>%
+        ggplot(., aes(x=PC1, 
+                label = name,
+                y=PC2))+
+        geom_point(alpha=0.5)+
+        geom_text(vjust = -1)+
+        # geom_text(check_overlap = T,
+        #      size = 3,
+        #     position=position_jitter(width=0.2,height=0.2))+
+          theme_phil()+
+        my_caption+
+        xlab("First Principal Component")+
+        ylab("Second Principal Component")+
+        coord_cartesian(xlim = c(-5, 15),
+                        ylim = c(-5, 15))+
+        geom_segment(x = 0,
+                     y = 0,
+                     xend = coords_1$PC1,
+                     yend = coords_1$PC2,
+                     arrow = arrow(length = unit(0.3, "cm"))
+                     )+
+        geom_segment(x = 0,
+                     y = 0,
+                     xend = coords_2$PC1,
+                     yend = coords_2$PC2,
+                     arrow = arrow(length = unit(0.3, "cm"))
+                     )+
+        geom_curve(x = 0,
+                     y = -1,
+                     xend = 2,
+                     yend = 1.8,
+                     col = 'green')+
+        annotate("text",
+                 x = 4, 
+                 y = -1,
+                 label = paste("cosine similarity",
+                               round(cos_ex, 2),
+                               "angle",
+                               round(angle, 1),
+                               sep = "\n"),
+                 col = "green")
+                              
+```
+
+In this case, we can see that Forgotten Waters and Patchwork are headed in different directions, making an angle of 127 degrees, which gives them a negative cosine similarity score. How is this different than the Euclidean distance? Mainly, it doesn't depend on the magnitude of the vector, only the angle. In our case, using normalized data in two dimensions, we won't really see much of a difference. 
+
+We can compute this for every game we have in our small sample. We'll change from cosine similarity to cosine distance (1- cosine similarity), which will make 0 very similar and 2 very dissimilar.
+
+```{r now compute cosine distance for every samp game}
+
+# get a matrix where each row is one game's values on the first two principal compnents
+pca_mat = pca_rotation %>%
+        filter(game_id %in% samp_ids) %>%
+        select(yearpublished, game_id, name, PC1, PC2) %>%
+   #     mutate(name_id = paste(name, game_id, sep="_")) %>%
+  #      select(name_id, starts_with("PC")) %>%
+   #     column_to_rownames("name_id") %>%
+        select(name, starts_with("PC")) %>%
+        column_to_rownames("name") %>%
+        as.matrix()
+
+# compute it a faster way using the matrix
+Matrix <- as.matrix(pca_mat)
+sim <- Matrix / sqrt(rowSums(Matrix * Matrix))
+samp_dist_cosine <- sim %*% t(sim)
+
+# bind together
+samp_compare = bind_rows(
+        samp_dist_cosine %>%
+                as.matrix() %>%
+                as.data.frame() %>%
+                rownames_to_column("game") %>%
+                gather('closest','dist',-game) %>%
+                filter(game == 'Teotihuacan: City of Gods') %>%
+                mutate(dist = 1-dist) %>% # cosine distance
+                mutate_if(is.numeric, round, 3) %>%
+                filter(dist !=0) %>%
+                arrange(dist) %>%
+                mutate(type = "cosine"),
+        samp_dist_manhattan %>%
+                rownames_to_column("game") %>%
+                gather('closest','dist',-game) %>%
+                filter(game == 'Teotihuacan: City of Gods') %>%
+                filter(dist !=0) %>%
+                arrange(dist) %>%
+                mutate(type = "manhattan"),
+        samp_dist_euclidean %>%
+                rownames_to_column("game") %>%
+                gather('closest','dist',-game) %>%
+                filter(game == 'Teotihuacan: City of Gods') %>%
+                filter(dist !=0) %>%
+                arrange(dist) %>%
+                mutate(type = "euclidean")) %>%
+        group_by(type) %>%
+     #   mutate(dist = rescale(dist, to =c(0,1))) %>%
+      #  mutate(dist = scale(dist, center=T, scale=T)) %>%
+        spread(type, dist)
+
+samp_compare %>%
+        mutate_if(is.numeric, round, 3) %>%
+        arrange(cosine) %>%
+        flextable() %>%
+        flextable::autofit()
+
+```
+
+In two dimensions, they all yield essentially the same result. One nice thing about the cosine distance (and similarity) is that it offers us a bit more intuitive way to understand *how* similar/dissimilar two games might be.
+
+Let's take these approach to the full dataset, getting the Euclidean, Manhattan, and cosine distances for all games using the first two principal components.  We used Inis before as an example, let's use it again and see what we get for all of these.
+
+```{r two dimension distance measures example 1}
+
+# cosine distance
+# get a matrix where each row is one game's values on the first two principal compnents
+pca_mat = pca_rotation %>%
+        mutate(name = gsub("_", "-", name)) %>%
+        mutate(name_id = paste(name, game_id, sep="_")) %>%
+        select(yearpublished, name_id, PC1, PC2) %>%
+   #     mutate(name_id = paste(name, game_id, sep="_")) %>%
+  #      select(name_id, starts_with("PC")) %>%
+   #     column_to_rownames("name_id") %>%
+        select(name_id, starts_with("PC")) %>%
+        column_to_rownames("name_id")
+
+# compute it a faster way using the matrix
+Matrix <- as.matrix(pca_mat)
+sim <- Matrix / sqrt(rowSums(Matrix * Matrix))
+dist_cosine_2d  <- sim %*% t(sim) %>%
+        as.matrix() %>%
+        as.data.frame() %>%
+        mutate(type = "cosine") %>%
+        rownames_to_column("name_id")
+
+# euclidean distance 
+dist_2d = bind_rows(
+        dist_euclidean_2d = pca_rotation %>%
+                mutate(name = gsub("_", "-", name)) %>%
+                mutate(name_id = paste(name, game_id, sep="_")) %>%
+                select(name_id, PC1, PC2) %>%
+                column_to_rownames("name_id") %>%
+                dist(method = "euclidean") %>%
+                as.matrix() %>%
+                as.data.frame() %>%
+                mutate(type = "euclidean") %>%
+                rownames_to_column("name_id"),
+        dist_manhattan_2d = pca_rotation %>%
+                mutate(name = gsub("_", "-", name)) %>%
+                mutate(name_id = paste(name, game_id, sep="_")) %>%
+                select(name_id, PC1, PC2) %>%
+                column_to_rownames("name_id") %>%
+                dist(method = "manhattan") %>%
+                as.matrix() %>%
+                as.data.frame() %>%
+                mutate(type = "manhattan") %>%
+                rownames_to_column("name_id"),
+        dist_cosine_2d) %>%
+        select(name_id, type, everything())
+                
+```
+
+```{r gather and get distances for these two dimension example 1, warning=F}
+
+# get neighbors
+dist_2d %>%
+        filter(grepl("Inis", name_id)) %>%
+        gather('closest','dist',-name_id, -type) %>%
+        separate(name_id, into = c("game", "game_id"), sep="_") %>%
+        separate(closest, into =c("closest", "closest_id"), sep="_") %>%
+        group_by(type) %>%
+        mutate(dist = case_when(type == 'cosine' ~ 1-dist,
+                                TRUE ~ dist)) %>%
+     #   mutate(dist = rescale(dist, to =c(0,1))) %>%
+     #   mutate(dist = scale(dist, center=T, scale=T)) %>%
+        spread(type, dist) %>%
+        mutate_if(is.numeric, round, 3) %>%
+        filter(game != closest) %>%
+        arrange(euclidean) %>%
+        datatable()
+
+# dist_2d %>%
+#         filter(grepl("Inis", name_id)) %>%
+#         gather('closest','dist',-name_id, -type) %>%
+#         separate(name_id, into = c("game", "game_id"), sep="_") %>%
+#         separate(closest, into =c("closest", "closest_id"), sep="_") %>%
+#         group_by(type) %>%
+#      #   mutate(dist = rescale(dist, to =c(0,1))) %>%
+#         mutate(dist = scale(dist, center=T, scale=T)) %>%
+#         spread(type, dist) %>%
+#         filter(game != closest) %>%
+#         ggplot(., aes(x=euclidean, 
+#                       label = closest,
+#                       y=manhattan))+
+#         geom_point()+
+#         geom_text(check_overlap=T,
+#                   vjust = -1)+
+#         theme_phil()
+#         
+```
+
+With two dimensions, the cosine distance doesn't give us quite as much information as the other two, as many games exist on that angle, while the other two take into account the magnitude, which is meaningful in this case.
+
+But are the other two measures good? If we place Inis on the map of all games by the first two components, it's not hard to see why these games are seen as similar.
+
+```{r zoom in on Inis, fig.height=8, fig.width=10}
+
+pca_rotation %>%
+        mutate(highlight = case_when(name == 'Inis' ~ 'yes',
+                                     TRUE ~ 'no')) %>%
+        ggplot(., aes(x=PC1, 
+                label = name,
+                color = highlight,
+                y=PC2))+
+        geom_point(alpha=0.5)+
+        geom_text(check_overlap = T,
+             size = 4,
+            position=position_jitter(width=0.01,height=0.01))+
+         # theme_phil()+
+        my_caption+
+        xlab("First Principal Component")+
+        ylab("Second Principal Component")+
+        facet_zoom(xlim = c(4,6),
+                   ylim = c(3,4),
+                   horizontal=F,
+                   zoom.size = 2)+
+        theme_bw(16)+
+        guides(color = "none",
+               size = "none")+
+        scale_color_manual(values = c("grey60", "blue"))
+
+```
+
+There actually aren't that many games right around Inis in the dataset, as it exists in a region of being somewhat high on both the complexity and thematic/storytelling dimensions. To my eye, these games aren't really the ones I would expect to come to mind for Inis. It is a rather unique game with its drafting and combat, but I would expect to see things like Blood Rage, Lords of Hellas showing up as comparisons.
+
+Let's pick another game and take a look at what we think. Let's go with Castles of Burgundy, as I would expect this to be smack dab in the middle of a bunch of Euros.
+
+```{r dist measures castules of burgundy, warning=F, message=F}
+
+# get neighbors
+dist_2d %>%
+        filter(grepl("The Castles of Burgundy_84876", name_id)) %>%
+        gather('closest','dist',-name_id, -type) %>%
+        separate(name_id, into = c("game", "game_id"), sep="_") %>%
+        separate(closest, into =c("closest", "closest_id"), sep="_") %>%
+        mutate(dist = case_when(type == 'cosine' ~ 1-dist,
+                                TRUE ~ dist)) %>%
+        group_by(type) %>%
+     #   mutate(dist = rescale(dist, to =c(0,1))) %>%
+     #   mutate(dist = scale(dist, center=T, scale=T)) %>%
+        spread(type, dist) %>%
+        mutate_if(is.numeric, round, 3) %>%
+        filter(game != closest) %>%
+        arrange(euclidean) %>%
+        datatable()
+```
+
+As before, the cosine similarity with only two dimensions isn't particularly useful. Here we sort of end up with the opposite problem, where we have a ton of games nearby, some of which feel right, but others not really - is Through the Ages really a comparable game to Castles of Burgundy? I would like to see more of Feld's games showing up here.
+
+
+```{r two dimension distance measures example castles of burgundy, fig.height=8, fig.width=10,  warning =F}
+
+pca_rotation %>%
+        mutate(highlight = case_when(name == 'The Castles of Burgundy' ~ 'yes',
+                                     TRUE ~ 'no')) %>%
+        ggplot(., aes(x=PC1, 
+                label = name,
+                color = highlight,
+                y=PC2))+
+        geom_point(alpha=0.5)+
+        geom_text(check_overlap = T,
+             size = 4,
+            position=position_jitter(width=0.01,height=0.01))+
+         # theme_phil()+
+        my_caption+
+        xlab("First Principal Component")+
+        ylab("Second Principal Component")+
+        facet_zoom(xlim = c(0, 2.5),
+                   ylim = c(-2, 0),
+                   horizontal=F,
+                   zoom.size = 2)+
+        theme_bw(16)+
+        guides(color = "none",
+               size = "none")+
+        scale_color_manual(values = c("grey60", "blue"))
+
+```
+
+
+So what do we do? Add more data.
+
+# Finding Similar Games in N Dimensions
+
+We previously used two dimensions to place games, but we have many more on which we might compare games. We could in theory use every feature we have about games, or all of the principal components. I will use the first 20 principal components, which explained around 30% of the variation in the dataset.
+
+```{r get distance nd for all}
+
+# get a matrix where each row is one game's values on the first two principal compnents
+pca_mat = pca_rotation %>%
+        mutate(name = gsub("_", "-", name)) %>%
+        mutate(name_id = paste(name, game_id, sep="_")) %>%
+        select(name_id, PC1:PC20) %>%
+        column_to_rownames("name_id")
+
+# compute it a faster way using the matrix
+Matrix <- as.matrix(pca_mat)
+sim <- Matrix / sqrt(rowSums(Matrix * Matrix))
+dist_cosine  <- sim %*% t(sim) %>%
+        as.matrix() %>%
+        as.data.frame() %>%
+        rownames_to_column("name_id") %>%
+        mutate(type = "cosine") %>%
+        select(type, everything())
+
+# compare to euclidean 
+dist_euclidean = pca_rotation %>%
+        mutate(name = gsub("_", "-", name)) %>%
+        mutate(name_id = paste(name, game_id, sep="_")) %>%
+        select(name_id, PC1:PC20) %>%
+        column_to_rownames("name_id") %>%
+        dist(method = "euclidean") %>%
+        as.matrix() %>%
+        as.data.frame() %>%
+        rownames_to_column("name_id") %>%
+        mutate(type = "euclidean") %>%
+        select(type, everything())
+
+# and manhattan
+dist_manhattan= pca_rotation %>%
+        mutate(name = gsub("_", "-", name)) %>%
+        mutate(name_id = paste(name, game_id, sep="_")) %>%
+        select(name_id, PC1:PC20) %>%
+        column_to_rownames("name_id") %>%
+        dist(method = "manhattan") %>%
+        as.matrix() %>%
+        as.data.frame() %>%
+        rownames_to_column("name_id") %>%
+        mutate(type = "manhattan") %>%
+        select(type, everything())
+
+# combine
+dist_all = bind_rows(dist_cosine,
+                     dist_euclidean,
+                     dist_manhattan)
+
+rm(dist_cosine, 
+   dist_cosine_2d,
+   dist_euclidean,
+   dist_manhattan)
+
+```
+
+```{r get cosine similarity fo rall using all, warning=F, message=F}
+
+# find neighbors for selected game
+samp = 'Spirit Island'
+
+samp_neighbors = dist_all %>%
+        filter(grepl(samp, name_id)) %>%
+        gather('closest','dist',-name_id, -type) %>%
+        mutate(dist = case_when(type == 'cosine' ~ 1-dist,
+                                TRUE ~ dist)) %>%
+        separate(name_id, into = c("game", "game_id"), sep="_") %>%
+        separate(closest, into =c("closest", "closest_id"), sep="_") %>%
+        group_by(type) %>%
+     #   mutate(dist = rescale(dist, to =c(0,1))) %>%
+     #   mutate(dist = scale(dist, center=T, scale=T)) %>%
+        spread(type, dist) %>%
+        mutate_if(is.numeric, round, 3) %>%
+        filter(game !=closest)
+                
+                
+# samp_neighbors %>%
+#         arrange(cosine) %>%
+#         datatable()
+
+nearest = dist_all %>%
+        filter(grepl(samp, name_id)) %>%
+        gather('closest','dist',-name_id, -type) %>%
+        mutate(dist = case_when(type == 'cosine' ~ 1-dist,
+                                TRUE ~ dist)) %>%
+        separate(name_id, into = c("game", "game_id"), sep="_") %>%
+        separate(closest, into =c("closest", "closest_id"), sep="_") %>%
+        group_by(type) %>%
+        slice_min(order_by = dist,
+                  n = 10,
+                  with_ties =F) %>%
+        filter(type == 'euclidean') %>%
+        pull(closest)
+
+# look
+dist_all %>%
+        filter(grepl(samp, name_id)) %>%
+        gather('closest','dist',-name_id, -type) %>%
+        mutate(dist = case_when(type == 'cosine' ~ 1-dist,
+                                TRUE ~ dist)) %>%
+        separate(name_id, into = c("game", "game_id"), sep="_") %>%
+        separate(closest, into =c("closest", "closest_id"), sep="_") %>%
+        group_by(type) %>%
+        slice_min(order_by = dist,
+                  n = 25,
+                  with_ties =F) %>%
+        select(-dist, -closest_id) %>%
+        ungroup() %>%
+        pivot_wider(names_from = "type",
+                    values_from = "closest") %>%
+        unnest() %>%
+        flextable() %>%
+        autofit()
+
+
+# game
+background =         
+pca_rotation %>%
+        # mutate(highlight = case_when(name %in% c("Cyclades", "Western Empires", "Kemet", "Inis", "Antike") ~ 'highlight',
+        #                              TRUE ~ 'no highlight')) %>%
+        ggplot(., aes(x=PC1, 
+                label = name,
+                y=PC2))+
+        geom_point(alpha=0.4,
+                   color = 'grey40')+
+        # geom_text(check_overlap = T,
+        #      size = 3,
+        #     position=position_jitter(width=0.01,height=0.01))+
+        theme_phil()+
+        my_caption+
+        xlab("First Principal Component")+
+        ylab("Second Principal Component")+
+        # facet_zoom(xlim = c(0, 2.5),
+        #            ylim = c(-2, 0),
+        #            horizontal=F,
+        #            zoom.size = 2)+
+        theme_bw(16)
+
+# get neighbors
+neighbors_dat =  pca_rotation %>%
+        filter(name %in% nearest)
+
+# get game coords on first wo
+samp_coords = pca_rotation %>%
+        filter(grepl(samp, name)) %>%
+        select(PC1, PC2)
+
+background + 
+        # facet_zoom(xlim = c(samp_coords$PC1-3, 
+        #                     samp_coords$PC1+3),
+        #            ylim = c(samp_coords$PC2-3,
+        #                     samp_coords$PC2+3),
+        #            horizontal = F)+
+        geom_point(data = neighbors_dat,
+                   aes(x=PC1, 
+                       y=PC2),
+    #               size = 3, 
+                   color ='blue')+
+        geom_text_repel(data  = neighbors_dat,
+                  aes(x=PC1, 
+                label = name,
+                y=PC2),
+     #        size = 3,
+             color = 'blue')
+        
+```
+
+Why do we find these for Nemesis? We can plot each game on the principal components we're looking at.
+
+
+```{r compare Nemsis across pcs}
+
+compare = neighbors_dat %>%
+        filter(name %in% nearest) %>%
+        mutate(name_id = paste(name, game_id, sep="_")) %>%
+        left_join(., samp_neighbors %>%
+                          mutate(name_id = paste(closest, closest_id, sep="_")) %>%
+                          select(name_id, cosine, euclidean, manhattan)) %>%
+        select(name_id, euclidean, cosine, manhattan, PC1:PC20) %>%
+        mutate_if(is.numeric, replace_na, 0) %>%
+        arrange(desc(euclidean))
+
+compare %>%
+        mutate(name_id = factor(name_id,
+                                levels = compare$name_id)) %>%
+        select(name_id, PC1:PC20) %>%
+        gather("variable", "value", -name_id) %>%
+        mutate(variable = factor(variable,
+                                 levels = paste("PC", seq(1,20), sep=""))) %>%
+        ggplot(., aes(x=variable,
+                      y=name_id,
+                      fill = value,
+                      color = value))+
+        geom_tile()+
+        theme_phil()+
+        theme(legend.title = element_text())+
+        scale_color_viridis(option="magma",
+                            limits = c(-5,5),
+                            oob = scales::squish)+
+        scale_fill_viridis(option="magma",
+                           limits = c(-5,5),
+                           oob = scales::squish)+
+        guides(color = "none",
+               fill = guide_colorbar(barheight=0.5,
+                                     barwidth=10,
+                                          title = "Negative               Positive",
+                                   #  title = "              Z Score",
+                                     title.position = "top"))+
+        theme(legend.position = "top")+
+        xlab("")+
+        ylab("")+
+        theme(panel.grid.minor = element_blank(),
+              panel.grid.major = element_blank())+
+        theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1))
+
+        
+```
+
+```{r fig.width=10}
+
+pos <- position_jitter(width = 0.1, height=0.25, seed = 2)
+pos2 <- position_jitter(width = 0.01, height=0.1, seed = 2)
+
+components_background = pca_rotation %>%
+        select(name, game_id, PC1:PC20) %>%
+        gather("component", "value", -name, -game_id) %>%
+        mutate(component = factor(component, levels = paste("PC", seq(1,20), sep=""))) %>%
+        ggplot(., aes(x=value,
+                      y= component))+
+        geom_jitter(alpha=0.05,
+                    position = pos,
+                   col = 'grey70')+
+        coord_flip()+
+        theme_phil()
+
+components_background +
+        geom_jitter(data = pca_rotation %>%
+                            filter(name %in% nearest) %>%
+                            select(name, game_id, PC1:PC20) %>%
+                            gather("component", "value", -name, -game_id) %>%
+                            mutate(component = factor(component, levels = paste("PC", seq(1,20), sep=""))),
+                    aes(x=value,
+                        color = name,
+                        y=component),
+                    position = pos2)+
+        geom_label_repel(data = pca_rotation %>%
+                            filter(name %in% nearest) %>%
+                            select(name, game_id, PC1:PC20) %>%
+                            gather("component", "value", -name, -game_id) %>%
+                            mutate(component = factor(component, levels = paste("PC", seq(1,20), sep=""))),
+                    aes(x=value,
+                        label = name,
+                        color = name,
+                        y=component),
+                    position = pos2,
+                    max.overlaps=5)+
+        guides(label = "none",
+               color = "none",
+               size = "none")+
+scale_color_viridis_d(option="magma",
+                              begin = 0.2,
+                              end = 0.8)+
+        coord_flip()
+
+```
+
+
+```{r plot lines, fig.width=10}
+
+ pca_rotation %>%
+        select(name, game_id, PC1:PC20) %>%
+        gather("component", "value", -name, -game_id) %>%
+        # mutate(component = gsub("PC", "", component)) %>%
+        # mutate(component = as.numeric(component)) %>%
+        mutate(component = factor(component, levels = paste("PC", seq(1,20), sep=""))) %>%
+        group_by(component) %>%
+        mutate(value = rescale(value, to = c(0,1))) %>%
+        mutate(name_id = paste(name, game_id, sep="_")) %>%
+        filter(name %in% nearest) %>%
+        # filter(game_id %in% (games_train %>%
+        # filter(pub_fantasy_flight_games == 1) %>%
+        # pull(game_id))) %>%
+        ggplot(., aes(x=component,
+                      group = name_id,
+                      color = name_id,
+                      by = name_id,
+                      y= value))+
+        geom_line(stat="smooth",
+                  method = "loess", 
+                  size = .9,
+                  span = .3,
+                  alpha = 0.5)+
+        # geom_line(alpha=0.2,
+        #             position = pos)+
+        theme_phil()+
+        guides(color = "none")+
+        scale_color_viridis_d(option="magma",
+                                      begin = 0.2,
+                                      end = 0.8)
+        
+
+
+```
+
+
