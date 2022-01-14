@@ -452,14 +452,14 @@ bar %>%
   geom_col(fill = 'grey60',
            color = NA)+
   facet_wrap(terms ~ dataset,
-             ncol =2,
+             ncol =1,
              scales = "free")+
   theme_phil()+
-        geom_vline(xintercept = 10)
+        geom_vline(xintercept = 20)
 
 ```
 
-For instance, we can plot the top variable loadings for the first 10 components.
+For instance, we can plot the top variable loadings for the first 20 components.
 
 ```{r pca contributions, fig.height=10, fig.width=10, warning=F, message=F}
 
@@ -468,35 +468,31 @@ source(here::here("functions/rename_func.R"))
 
 # plot for each
 bar %>% 
-  select(dataset, pca_components) %>%
-  filter(dataset == 'fundamentals, mechanics, and categories') %>%
-  unnest() %>% 
-  filter(component == 'PC1' | 
-           component == 'PC2' | 
-           component == 'PC3' | component == 'PC4' |
-           component == 'PC5' | component == 'PC6' |
-           component == 'PC7' | component == 'PC8' |
-           component == 'PC9' | component == 'PC10') %>%
-  group_by(dataset, component) %>%
-  slice_max(., order_by = abs(value),
-            n = 15) %>%
-  mutate(terms = rename_func(terms)) %>%
-  ggplot(., aes(x=value,
+        select(dataset, pca_components) %>%
+        filter(dataset == 'fundamentals, mechanics, and categories') %>%
+        unnest() %>% 
+        filter(component %in% paste("PC", seq(1,20), sep="")) %>%
+        mutate(component = factor(component,
+                                 levels = paste("PC", seq(1,20), sep=""))) %>%
+        group_by(dataset, component) %>%
+        slice_max(., order_by = abs(value),n = 10) %>%
+        mutate(terms = rename_func(terms)) %>%
+        ggplot(., aes(x=value,
                 fill = value,
                 y = reorder_within(terms, by =value, within = component)))+
-  geom_col()+
-  scale_y_reordered()+
-  facet_wrap(dataset ~ component,
-             ncol =2,
+        geom_col()+
+        scale_y_reordered()+
+        facet_wrap(component~.,
+             ncol =3,
              scales = "free_y")+
-  theme_phil()+
-  my_caption+
-  scale_fill_viridis(option = "plasma",
+        theme_phil()+
+        my_caption+
+        scale_fill_viridis(option = "plasma",
                      begin = 0.2,
                      end = 0.8) +
-  ylab("feature")+
-  xlab("contribution")+
-  guides(fill = guide_colorbar(barwidth = 10))+
+        ylab("feature")+
+        xlab("contribution")+
+        guides(fill = guide_colorbar(barwidth = 10))+
         guides(fill = "none")
 
 ```
@@ -794,19 +790,19 @@ clusters = bar %>%
                              cluster == 'Cluster_3' ~ 'Simulation_Wargame',
                              cluster == 'Cluster_4' ~ 'Family_Strategy',
                              cluster == 'Cluster_5' ~ 'Complex_Strategy',
-                             cluster == 'Cluster_6' ~ 'Simulation_Wargame')) %>%
-  bind_rows(., 
-            bar %>%
-              filter(dataset == 'fundamentals and mechanics') %>%
-              select(dataset, pca_rotation, kmeans_clusters) %>%
-        unnest() %>%
-        arrange(cluster) %>%
-        select(dataset, game_id, name, cluster) %>%
-        mutate(cluster = paste("Cluster", cluster, sep="_")) %>%
-          mutate(label = case_when(cluster == 'Cluster_1' ~ 'Thematic',
-                             cluster == 'Cluster_2' ~ 'Party',
-                             cluster == 'Cluster_3' ~ 'Strategy',
-                             cluster == 'Cluster_4' ~ 'Wargame')))
+                             cluster == 'Cluster_6' ~ 'Simulation_Wargame'))
+  # bind_rows(., 
+  #           bar %>%
+  #             filter(dataset == 'fundamentals and mechanics') %>%
+  #             select(dataset, pca_rotation, kmeans_clusters) %>%
+  #       unnest() %>%
+  #       arrange(cluster) %>%
+  #       select(dataset, game_id, name, cluster) %>%
+  #       mutate(cluster = paste("Cluster", cluster, sep="_")) %>%
+  #         mutate(label = case_when(cluster == 'Cluster_1' ~ 'Thematic',
+  #                            cluster == 'Cluster_2' ~ 'Party',
+  #                            cluster == 'Cluster_3' ~ 'Strategy',
+  #                            cluster == 'Cluster_4' ~ 'Wargame')))
 
 ```
 
@@ -823,7 +819,7 @@ bar = bar %>%
 
 # Finding Nearest Neighbors
 
-We'll now use the distance matrix to identify the closest neighbors for all games. How should we use these to compute similarity between games? This amounts to finding the distance between games on the principal components. I'm calculating the Euclidean distance and the Manhattan distance for now the first ten principal components.
+We'll now use the distance matrix to identify the closest neighbors for all games. How should we use these to compute similarity between games? This amounts to finding the distance between games on the principal components. I'm calculating the Euclidean distance and the Manhattan distance on the first 20 principal components.
 
 ```{r compare the different distance measures}
 
@@ -1009,7 +1005,7 @@ bar3 = bar2 %>%
                                         -usersrated,
                                         -yearpublished,
                                         -name) %>%
-                                 select(PC1:PC10) %>%
+                                 select(PC1:PC20) %>%
                                  as.matrix(), method="manhattan") %>% #edit here
                              as.matrix() %>%
                              as.data.frame()))
@@ -1028,7 +1024,7 @@ bar3 = bar3 %>%
                              filter(!is.na(dist)) %>% 
                              group_by(.row) %>% 
                              arrange(dist) %>% 
-                             slice_min(dist, n=50, with_ties = T) %>%
+                             slice_min(dist, n=100, with_ties = T) %>%
                              mutate(dist_rank=row_number()))) %>%
   mutate(neighbors= map2(obs_dist, data,
                       ~ left_join(.x, .y %>%
