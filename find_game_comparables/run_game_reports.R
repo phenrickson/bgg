@@ -26,7 +26,7 @@ run_game_report = function(input_ids)
 }
 
 # # select agme ids
-id = 300217
+id = 36218
 # id = 283155
 # id = 161533
 # id = 343905
@@ -47,15 +47,15 @@ run_game_report(id)
 
 rm(list=ls())
 
-# # get top 100 from today
-# today = get_bgg_data_from_github(Sys.Date())
-# 
-# ids = today %>%
-#         arrange(desc(bayes_average)) %>%
-#         pull(game_id)
-# 
-# # run and produce report for selected ids
-# run_game_report(ids[1:250])
+# get top 100 from today
+today = get_bgg_data_from_github(Sys.Date())
+
+ids = today %>%
+        arrange(desc(bayes_average)) %>%
+        pull(game_id)
+
+# run and produce report for selected ids
+run_game_report(ids[1:250])
 
 # # find game
 # today %>%

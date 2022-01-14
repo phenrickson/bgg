@@ -7,6 +7,6 @@ rmarkdown::render(here::here("predict_ratings/examine_models.Rmd"),
                   #                      Sys.Date(),
                   #                      sep=""),
                   output_file = "predicted_bgg_ratings",
-                  output_dir = here::here("predict_ratings/"))
+                  output_dir = here::here("predict_ratings/predictions"))
 
 rm(list=ls())

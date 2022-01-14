@@ -15,7 +15,7 @@ This notebook is for examining current ratings from boardgamegeek.com with the a
 
 For further analysis and projects related to boardgamegeek data, see github.com/phenrickson/bgg
 
-```{r global settings, echo=F, warning=F, message=F, results='hide'}
+```{r global settings, echo=F, warning=F, message=F}
 
 knitr::opts_chunk$set(echo = F,
                       dev="png",
@@ -35,7 +35,7 @@ source(here::here("functions/theme_phil.R"))
 
 ```
 
-```{r connect to big query, warning=F, message=F, results='hide'}
+```{r connect to big query, warning=F, message=F}
 
 library(bigrquery)
 
