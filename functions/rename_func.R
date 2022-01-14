@@ -4,7 +4,12 @@ function(x) {
         x<-gsub("cat_memory", "cat_memory_game", x)
         x<-gsub("cat_spiessecret_agents", "cat_spies_secret_agents", x)
         x<-gsub("cat_deduction", "cat_deduction_game", x)
+        x<-gsub("mech_deduction", "mech_deduction_mechanic", x)
         x<-gsub("cat_novelbased", "cat_novel_based", x)
+        x<-gsub("cat_realtime", "cat_realtime_game", x)
+        x<-gsub("mech_realtime", "mech_realtime_mechanic", x)
+        x<-gsub("cat_memory", "cat_memory_game", x)
+        x<-gsub("mech_memory", "mech_memory_mechanic", x)
         x<-gsub("cat_","", x)
         x<-gsub("mech_","", x)
         x<-gsub("pub_","", x)
@@ -25,6 +30,7 @@ function(x) {
         x = gsub("Movies Tv", "Movies TV", x)
         x = gsub("Auctionbidding", "Auction Bidding", x)
         x = gsub("Postnapoleonic", "Post Napoleonic", x)
+        x = gsub("Paperandpencil", "Paper and Pencil", x)
         x
         
 }
