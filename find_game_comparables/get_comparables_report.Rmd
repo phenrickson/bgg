@@ -7,7 +7,7 @@ output:
         toc: true
         toc_depth: 3
 params:
-  id: 331363
+  id: 228328
 ---
 
 ```{r global settings, echo=F, warning=F, message=F, results = 'hide'}
@@ -68,9 +68,14 @@ source(here::here("functions/baverage_func.R"))
 source(here::here("functions/average_func.R"))
 source(here::here("functions/avgweight_func.R"))
 
-# get record
+# # get record
+# suppressMessages({
+#         record = get_game_record(params$id)
+# })
+
 suppressMessages({
-        record = get_game_record(params$id)
+record = get_game_record(params$id) %>%
+        mutate(number_designers = rowSums(across(starts_with("des_"))))
 })
 
 ```
@@ -85,6 +90,7 @@ This document details a game's 25 nearest neighbors and illustrate some of the d
 
 ```{r predict rating and weight, warning=F, message=F, results = 'hide'}
 
+# predict weight and complexity
 game_preds = bake_and_predict_avgweight_and_ratings(params$id,
                                                     "xgbTree_fit")
 
@@ -384,13 +390,11 @@ if(check_obs > 0) {
         
         print("game not in existing dataset; pulling game info from BGG and calculating...")
         
-        # if the game isn't present, we need to go grab it and then add it to our existing games
-        
-        suppressMessages({
-        game_record = get_game_record(id) %>%
-                mutate(number_designers = rowSums(across(starts_with("des_"))))
-        })
-        
+        # use preivously grabbed record with estimated complexity
+        game_record = record
+        game_record$avgweight = game_preds$estimated_weight$pred
+                
+        # get the name
         game = game_record %>%
                 pull(name)
         
@@ -836,13 +840,12 @@ line_plot
         
 ```
 
-We can also use a tile plot to view each of the neighbors across every principal component used, which can be a useful way of lookign to see if there's one dimension in particular on which the games stand out.
+We can also use a tile plot to view each of the neighbors across every principal component used, which can be a useful way of looking to see if there's one dimension in particular on which the games stand out.
 
 ```{r tile plot, fig.height=8, fig.width=10, warning=F, message=F}
 
 profile_df %>%
         filter(game_id %in% c(id, compare_full)) %>%
-        filter(variable %in% paste("PC", seq(1,10), sep = "")) %>%
         #     mutate(name = paste(name, game_id, sep="_")) %>%
         mutate(name = factor(abbreviate(name,
                                         minlength=30),

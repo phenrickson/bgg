@@ -3,33 +3,28 @@ source(here::here("scripts/load_packages.R"))
 source(here::here("functions/theme_phil.R"))
 source(here::here("functions/get_game_record.R"))
 source(here::here("functions/get_bgg_data_from_github.R"))
-
-# function
-run_game_report = function(input_ids)
-{
-        
-        names_df = suppressMessages({get_game_record(input_ids) %>%
-                        mutate(name = tolower(gsub("[[:space:]]", "-", gsub("\\s+", " ", gsub("[[:punct:]]","", name))))) %>%
-                        select(name, game_id) %>%
-                        mutate(name_id = paste(name, game_id, sep="_")) %>%
-                        select(game_id, name_id)
-        })
-        
-        # run through
-        foreach(i=1:length(input_ids)) %do% {
-                rmarkdown::render(here::here("find_game_comparables/get_comparables_report.Rmd"),
-                                  params = list(id = names_df$game_id[i]),
-                                  output_file =  names_df$game_id[i],
-                                  output_dir = here::here("find_game_comparables/game_reports"))
-        }
-
-}
+source(here::here("functions/run_game_report.R"))
 
 # # select agme ids
-id = 331363
-# id = 300217
-# id = 283155
-# id = 161533
+#id = 331363
+#ids = 342942
+
+ids = c(340466,
+        295770,
+        331363)
+
+run_game_report(ids)
+
+rm(list=ls())
+
+
+# id = 228328
+# ids = c(300217,
+#         283155,
+#         161533)
+ # id = 300217
+ # id = 283155
+ # id = 161533
 # id = 343905
 # id = 237179
 # id = 23540
@@ -42,11 +37,6 @@ id = 331363
 # id = 342942
 # id = 317511
 # id = 139443
-
-# # run and produce report for selected ids
-run_game_report(id)
-
-rm(list=ls())
 
 # # get top 100 from today
 # today = get_bgg_data_from_github(Sys.Date())
