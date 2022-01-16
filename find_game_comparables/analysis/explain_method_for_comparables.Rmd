@@ -1426,12 +1426,13 @@ pca_rotation %>%
 
 ```
 
-
 So what do we do? Add more data.
 
 # Finding Similar Games in N Dimensions
 
 We previously used two dimensions to place games, but we have many more on which we might compare games. We could in theory use every feature we have about games, or all of the principal components. I will use the first 20 principal components, which explained around 30% of the variation in the dataset.
+
+We'll find the Euclidean and Manhattan between every game, as well as the cosine similarity (which we will convert to distance.
 
 ```{r get distance nd for all}
 
@@ -1490,10 +1491,51 @@ rm(dist_cosine,
 
 ```
 
+We can look at a few examples to see what results we get, as well as why we get them. Let's use Nemesis as an example. We have a vector for nemesis on the twenty principal components we are looking at. We can make a table of the first ten.
+
+```{r show nemesis vector}
+
+pca_rotation %>%
+        filter(name == 'Nemesis') %>%
+        select(game_id, name, PC1:PC10) %>%
+        mutate(game_id = as.character(game_id)) %>%
+        mutate_if(is.numeric, round, 2) %>%
+        flextable() %>%
+        flextable::autofit()
+
+```
+
+We could also just plot these values for every component on a line.
+
+```{r line plot for nemesis}
+
+nemesis_plot = pca_rotation %>%
+        filter(name == 'Nemesis') %>%
+        select(game_id, name, PC1:PC20) %>%
+        mutate(game_id = as.character(game_id)) %>%
+        gather("component", "loading",-game_id, - name) %>%
+        ggplot(., aes(x = component,
+                      y = loading,
+                      color = name))+
+        geom_path()+
+        theme_phil()+
+        coord_cartesian(ylim = c(-15, 15))
+
+nemesis_plot
+
+
+```
+
+
+Finding the distance between games is the same as before, but now we're using more dimensions.
+
+
+What games are the most similar to Nemesis using the three distance metrics? We'll show the top 25 games from each.
+
 ```{r get cosine similarity fo rall using all, warning=F, message=F}
 
 # find neighbors for selected game
-samp = 'Spirit Island'
+samp = 'Nemesis'
 
 samp_neighbors = dist_all %>%
         filter(grepl(samp, name_id)) %>%
@@ -1508,12 +1550,7 @@ samp_neighbors = dist_all %>%
         spread(type, dist) %>%
         mutate_if(is.numeric, round, 3) %>%
         filter(game !=closest)
-                
-                
-# samp_neighbors %>%
-#         arrange(cosine) %>%
-#         datatable()
-
+        
 nearest = dist_all %>%
         filter(grepl(samp, name_id)) %>%
         gather('closest','dist',-name_id, -type) %>%
@@ -1540,6 +1577,7 @@ dist_all %>%
         slice_min(order_by = dist,
                   n = 25,
                   with_ties =F) %>%
+        filter(game != closest) %>%
         select(-dist, -closest_id) %>%
         ungroup() %>%
         pivot_wider(names_from = "type",
@@ -1548,6 +1586,12 @@ dist_all %>%
         flextable() %>%
         autofit()
 
+```
+
+As before, we can look at where these games fall in our simple two dimensional map of all games.
+
+
+```{r place nemesis on background, fig.width=10}
 
 # game
 background =         
@@ -1602,7 +1646,6 @@ background +
 ```
 
 Why do we find these for Nemesis? We can plot each game on the principal components we're looking at.
-
 
 ```{r compare Nemsis across pcs}
 

@@ -116,25 +116,25 @@ bake_user_collection = function(data,
     test_data = data %>%
       filter(yearpublished > year_split)
         
-        # combine collection data with train data
-        training_and_collection_data = train_data %>%
-                left_join(., 
-                          collection_data %>%
-                                  mutate(played = case_when(own == 1 | prevowned == 1| !(is.na(rating)) ~ 1,
-                                                                 TRUE ~ 0)) %>%
-                                  mutate(have_owned = case_when(own == 1 | prevowned == 1 ~ 1,
-                                                                TRUE ~ 0)) %>%
-                                  select(game_id, own, have_owned, played, rating, username) %>%
-                                  pivot_wider(names_from = c("username"),
-                                              values_from = c("own", "played", "rating"),
-                                              values_fn = max,
-                                              id_cols = game_id) %>%
-                                  mutate_at(vars(starts_with("have_owned_")),
-                                            ~ replace_na(., 0)) %>%
-                                  mutate_at(vars(starts_with("own_")),
-                                            ~ replace_na(., 0)),
-                          by = c("game_id"))
-        
+    # combine collection data with train data
+    training_and_collection_data = train_data %>%
+        left_join(., 
+                  collection_data %>%
+                          mutate(played = case_when(own == 1 | prevowned == 1| !(is.na(rating)) ~ 1,
+                                                         TRUE ~ 0)) %>%
+                          mutate(have_owned = case_when(own == 1 | prevowned == 1 ~ 1,
+                                                        TRUE ~ 0)) %>%
+                          select(game_id, own, have_owned, played, rating, username) %>%
+                          pivot_wider(names_from = c("username"),
+                                      values_from = c("own", "played", "rating"),
+                                      values_fn = max,
+                                      id_cols = game_id) %>%
+                          mutate_at(vars(starts_with("have_owned_")),
+                                    ~ replace_na(., 0)) %>%
+                          mutate_at(vars(starts_with("own_")),
+                                    ~ replace_na(., 0)),
+                  by = c("game_id"))
+
         # create recipe 
         recipe<- recipe(~ .,
                         x = training_and_collection_data) %>%
