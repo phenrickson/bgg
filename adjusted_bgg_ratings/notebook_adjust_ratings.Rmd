@@ -411,7 +411,7 @@ We want a list of games that isn't so heavily skewed towards complexity. We want
 
 ## Fitting a Simple Regression
 
-To do this, wwe need the *residuals* from a regression of average rating on complexity - these will be the variation in game ratings that are *not explained* by complexity. We will fit the model and inspect the results.
+To do this, we need the *residuals* from a regression of average rating on complexity - these will be the variation in game ratings that are *not explained* by complexity. We will fit the model and inspect the results.
 
 ```{r regress rating on weight, warning=F, message=F}
 
@@ -445,7 +445,7 @@ complexity_model %>%
 
 ```
 
-The intercept indicates the average rating of a game with a complexity of 0, which is kind of nonsensical. The coefficient indicates the effect of a unit increase in the complexity of a game on the average rating. Putting these two together tells us that a game with a complexity rating of 1 would have a rating of `r round(predict(complexity_model$model[[1]], newdata = data.frame(avgweight = 1), se=T) %>% as.data.frame() %>% pull(fit),2)`. A game with a complexity rating of 5, meanwhile, would have a weight of `r round(predict(complexity_model$model[[1]], newdata = data.frame(avgweight = 5), se=T) %>% as.data.frame() %>% pull(fit),2)`.
+The intercept indicates the average rating of a game with a complexity of 0, which is kind of nonsensical. The coefficient indicates the effect of a unit increase in the complexity of a game on the average rating. Putting these two together tells us that a game with a complexity rating of 1 would have a rating of `r round(predict(complexity_model$model[[1]], newdata = data.frame(avgweight = 1), se=T) %>% as.data.frame() %>% pull(fit),2)`. A game with a complexity rating of 5, meanwhile, would have a rating of `r round(predict(complexity_model$model[[1]], newdata = data.frame(avgweight = 5), se=T) %>% as.data.frame() %>% pull(fit),2)`.
 
 The model indicates that the complexity of a game explains about 26% of the variation in average ratings (R-squared, which simply is the correlation coefficient (R) we saw earlier squared). So it's not the only thing that matters, but it has a pretty sizeable impact on the average rating and the corresponding geek rating.
 
@@ -1149,7 +1149,33 @@ votes_added_games %>%
 
 Adding 100k votes gives us the list of games that more or less maps to the evergreen games of the last two decades, and actually shows a decent balance of complex and simple games. I would argue that is is a stronger list to look at for people who are interested in the hobby but aren't necessarily going to be interested in chasing the hotness.
 
-We'll store these lists on Github for everyone else to use.
+## Interactive Table with Different Baseline Threshholds
+
+I'll now put this same information into a datatable to make it a bit more interactive, you can sort and search for any game and see how it compares across the different thresholds.
+
+```{r interactive data table, warning=F, message=F}
+
+votes_added_games %>%
+  rename(ID = game_id,
+         Name = name,
+         YearPublished = yearpublished,
+         UsersRated = usersrated,
+         Average = avg_rank,
+         SD = sd_rank,
+         Rank = rank,
+         `1k` = votes_1000,
+         `2k` = votes_2000,
+         `5k` = votes_5000,
+         `10k` = votes_10000,
+         `25k` = votes_25000,
+         `50k` = votes_50000,
+         `100k` = votes_100000) %>%
+  select(Name, YearPublished, Rank, Average, `1k`,`2k`, `5k`, `10k`, `25k`, `50k`, `100k`) %>%
+  arrange(`100k`) %>%
+        datatable()
+
+```
+
 
 ```{r amend df to fields we want}
 

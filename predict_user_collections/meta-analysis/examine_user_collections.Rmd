@@ -16,6 +16,16 @@ knitr::opts_chunk$set(echo = F,
                       fig.width = 10,
                       fig.height = 6)
 
+# flextable settings
+library(flextable)
+set_flextable_defaults(theme_fun = theme_alafoli,
+                       font.color = "grey10",
+  padding.bottom = 6, 
+  padding.top = 6,
+  padding.left = 6,
+  padding.right = 6,
+  background.color = "white")
+
 options(knitr.duplicate.label = "allow")
 
 options(scipen=999)
@@ -31,7 +41,6 @@ source(here::here("functions/get_collection.R"))
 # library
 #library(webshot2)
 library(magick)
-library(flextable)
 library(bggAnalytics)
 library(tidymodels)
 library(workflows)
@@ -47,7 +56,7 @@ set_flextable_defaults(theme_fun = theme_booktabs,
 
 ```
 
-```{r get big query tables, warning=F, message=F}
+```{r get big query tables, warning=F, message=F, results = 'hide'}
 
 library(bigrquery)
 
@@ -72,6 +81,11 @@ active_games<-DBI::dbGetQuery(bigquerycon,
 # query active games
 game_expansions<-DBI::dbGetQuery(bigquerycon, 
                               'SELECT * FROM bgg.game_expansions')
+
+# create caption for plots
+my_caption = list(labs(caption = paste(paste("Data from boardgamegeek.com as of", max(as.Date(active_games$timestamp))),
+                        paste("Data and analysis at github.com/phenrickson/bgg"), sep="\n")))
+
 
 # bgg_rankings<-bq_table_query(bq_bgg,
 #                         query = 
@@ -333,11 +347,11 @@ collections_info = collections_table %>%
 
 # Exploratory Analysis
 
-## Collection Size
+Let's look at a couple of different pieces about a collection. How many games do they own - meaning games that are marked as currently in their collection. How games have they rated - meaning they have assigned a rating to a game. How many games have they marked as previously owned?
 
 ```{r plot owned, wanted, etc}
 
-
+#dists_collection = 
 collections_info %>%
         filter(type == 'boardgame') %>%
         select(username, date, game_id, rating, own, prevowned) %>%
@@ -354,15 +368,25 @@ collections_info %>%
                max_games = max(games)) %>%
         ggplot(., aes(x=games,
                       y=reorder(variable, median_games)))+
+        # geom_density_ridges(alpha=0.8,
+        #                     rel_min_height = 0.01, 
+        #                     jittered_points = TRUE,
+        #                     position = position_points_jitter(width = 0.1, height = 0),
+        #                     point_shape = "|", point_size = 2)+
         stat_density_ridges(alpha=0.8,
+                            stat = 'binline',
                             quantile_lines = TRUE,
                             quantile_fun = median,
-                            quantiles = 2) + 
+                            quantiles = 2,
+                            draw_baseline = F) +
         theme_phil()+
         xlab("number of games")+
-        ylab("collection variable")
-
+        ylab("collection")+
+        my_caption
+        
 ```
+
+For each of these outcomes, we have some collections that are way out in the tails of extremely right-skewed distributions. I want to dig into this a bit more. I'm going to create a new category, owned, that marks a user as having owned a game if it is currently in their collection or if they've previously 
 
 What was the distribution of games owned by the users (not counting expansions)?
 
@@ -371,11 +395,13 @@ What was the distribution of games owned by the users (not counting expansions)?
 temp = collections_info %>%
         filter(type == 'boardgame') %>%
         select(username, date, game_id, rating, own, prevowned) %>%
+        mutate(owned = case_when(own == 1 | prevowned == 1 ~ 1,
+                                 TRUE ~ 0)) %>%
         mutate(rated = case_when(is.na(rating) ~ 0,
                                  TRUE ~ 1)) %>%
         select(-rating) %>%
         melt(id.vars = c("username", "date", "game_id")) %>%
-        filter(variable == 'own') %>%
+        filter(variable == 'owned') %>%
         group_by(username, date, variable) %>%
         summarize(games = sum(value),
                   .groups = 'drop') %>%
@@ -386,23 +412,21 @@ temp = collections_info %>%
 temp %>%
         ggplot(., aes(x=games))+
       #  geom_density(alpha=0.8)+
-        geom_histogram(bins=100)+
-        geom_vline(aes(xintercept = mean_games),
-                   col = 'blue')+
+        geom_histogram(bins=100,
+                       fill = 'grey60')+
+        geom_vline(aes(xintercept = mean_games))+
         facet_wrap(variable~.,
                    ncol =1)+
         theme_phil()+
         annotate("text",
                  x = temp$median_games[1]*5,
                  y = 50,
-                 color = 'blue',
                  label = paste('median games owned:', temp$median_games[1]))+
         xlab("number of games owned")+
         ylab("number of users")+
         annotate("text",
                  x = 0.9*temp$max_games[1],
                  y = 19,
-                 color = "orange",
                  label = paste('most games owned:', temp$max_games[1]))+
         geom_curve(
                 aes(x = 0.9*max_games, 
@@ -411,8 +435,10 @@ temp %>%
                     yend = 5),
                 data = temp,
                 curvature = -0.2,
-                color = 'orange',
-                arrow = arrow(length = unit(0.03, "npc")))
+                arrow = arrow(length = unit(0.03, "npc")))+
+        my_caption
+
+median_games_owned = temp$mean_games[1]
 
 rm(temp)
 
@@ -440,23 +466,21 @@ temp = collections_info %>%
 temp %>%
         ggplot(., aes(x=games))+
       #  geom_density(alpha=0.8)+
-        geom_histogram(bins=100)+
-        geom_vline(aes(xintercept = mean_games),
-                   col = 'blue')+
+        geom_histogram(bins=100,
+                       fill = 'grey60')+
+        geom_vline(aes(xintercept = mean_games))+
         facet_wrap(variable~.,
                    ncol =1)+
         theme_phil()+
         annotate("text",
                  x = temp$median_games[1]*5,
                  y = 50,
-                 color = 'blue',
                  label = paste('median games rated:', temp$median_games[1]))+
         xlab("number of games rated")+
         ylab("number of users")+
         annotate("text",
                  x = 0.9*temp$max_games[1],
                  y = 19,
-                 color = "orange",
                  label = paste('most games rated:', temp$max_games[1]))+
         geom_curve(
                 aes(x = 0.9*max_games, 
@@ -465,12 +489,15 @@ temp %>%
                     yend = 5),
                 data = temp,
                 curvature = -0.2,
-                color = 'orange',
-                arrow = arrow(length = unit(0.03, "npc")))
+                arrow = arrow(length = unit(0.03, "npc")))+
+        my_caption
+
+median_games_rated = temp$median_games[1]
+rm(temp)
 
 ```
 
-How do these numbers usually compare (excluding users who did not rate at least one game)?
+The median for games rated (`r median_games_rated`) is a bit lower than the median for games owned (`r median_games_owned`). Do users usually rate more games than they own, or vice versa? We can plot the each user's number of games owned vs number of games rated to get an idea.
 
 ```{r owned vs rated}
 
@@ -479,6 +506,8 @@ collections_info %>%
         select(username, date, game_id, rating, own, prevowned) %>%
         mutate(rated = case_when(is.na(rating) ~ 0,
                                  TRUE ~ 1)) %>%
+        mutate(owned = case_when(own == 1 | prevowned == 1 ~ 1,
+                                 TRUE ~ 0)) %>%
         select(-rating) %>%
         melt(id.vars = c("username", "date", "game_id")) %>%
         group_by(username, date, variable) %>%
@@ -486,8 +515,40 @@ collections_info %>%
                   .groups = 'drop') %>%
         spread(variable, games) %>%
         filter(rated > 0) %>%
-        mutate(diff = own - rated) %>%
-        ggplot(., aes(x=own,
+        mutate(diff = owned - rated) %>%
+        mutate(type = case_when(diff >= 0 ~ 'owned more than rated',
+                                diff <=0 ~ 'rated more than owned',
+                                diff == 0 ~ 'same')) %>%
+        group_by(type) %>%
+        count() %>%
+        ungroup() %>%
+        mutate(prop = round(prop.table(n),2)) %>%
+        flextable() %>%
+        flextable::autofit() %>%
+        color(part = "body",
+              color = "white") %>%
+        bg(., i = ~ type == 'owned more than rated',
+           bg = 'blue') %>%
+        bg(., i = ~ type == 'rated more than owned',
+           bg = 'darkorange')
+
+collections_info %>%
+        filter(type == 'boardgame') %>%
+        select(username, date, game_id, rating, own, prevowned) %>%
+        mutate(rated = case_when(is.na(rating) ~ 0,
+                                 TRUE ~ 1)) %>%
+        mutate(owned = case_when(own == 1 | prevowned == 1 ~ 1,
+                                 TRUE ~ 0)) %>%
+        select(-rating) %>%
+        melt(id.vars = c("username", "date", "game_id")) %>%
+        group_by(username, date, variable) %>%
+        summarize(games = sum(value),
+                  .groups = 'drop') %>%
+        spread(variable, games) %>%
+        filter(rated > 0) %>%
+        mutate(diff = owned - rated) %>%
+        ggplot(., aes(x=owned,
+                      color = diff,
                       label = username,
                       y=rated))+
         geom_point(alpha=0.75)+
@@ -498,40 +559,87 @@ collections_info %>%
                     slope = 1,
                     linetype = 'dotted')+
         annotate("label",
-                 x = 150,
+                 x = 200,
                  y = 1200,
-                 label = "rate more than own")+
+                 color = 'darkorange',
+                 label = "rated more than owned")+
         annotate("label",
-                 x = 850,
+                 x = 1000,
                  y = 150,
-                 label = "own more than rate")
+                 color = 'blue',
+                 label = "owned more than rated")+
+        my_caption+
+        scale_color_gradient(low = "darkorange",
+                             high = "blue",
+                             limits = c(-100, 100),
+                             oob = scales::squish)+
+        guides(color = "none")+
+        xlab("number of games owned")+
+        ylab("number of games rated")
 
-collections_info %>%
-        filter(type == 'boardgame') %>%
-        select(username, date, game_id, rating, own, prevowned) %>%
-        mutate(rated = case_when(is.na(rating) ~ 0,
-                                 TRUE ~ 1)) %>%
-        select(-rating) %>%
-        melt(id.vars = c("username", "date", "game_id")) %>%
-        group_by(username, date, variable) %>%
-        summarize(games = sum(value),
-                  .groups = 'drop') %>%
-        spread(variable, games) %>%
-        filter(rated > 0) %>%
-        mutate(diff = own - rated) %>%
-        ggplot(., aes(x=diff))+
-        geom_density(fill = 'gray60',
-                     color = 'grey60',
-                     alpha = 0.9)+
-      #  geom_histogram(bins = 100)+
-        theme_phil()+
-        xlab("Games Owned - Games Rated")
+
+
+# collections_info %>%
+#         filter(type == 'boardgame') %>%
+#         select(username, date, game_id, rating, own, prevowned) %>%
+#         mutate(rated = case_when(is.na(rating) ~ 0,
+#                                  TRUE ~ 1)) %>%
+#         select(-rating) %>%
+#         melt(id.vars = c("username", "date", "game_id")) %>%
+#         group_by(username, date, variable) %>%
+#         summarize(games = sum(value),
+#                   .groups = 'drop') %>%
+#         spread(variable, games) %>%
+#         filter(rated > 0) %>%
+#         mutate(diff = own - rated) %>%
+#         ggplot(., aes(x=diff))+
+#         geom_density(fill = 'gray60',
+#                      color = 'grey60',
+#                      alpha = 0.9)+
+#       #  geom_histogram(bins = 100)+
+#         theme_phil()+
+#         xlab("Games Owned - Games Rated")
         
 ```
 
-How do the users compare in their ratings to the average ratings on BoardGameGeek?
+The majority of users have owned more than they've rated, which holds even if we filter out users that don't rate their games. I wonder how much of this is from people buying newer games during the pandemic and not yet being able to get them to the table? This is the case for me and my collection, at any rate.
 
-```{r user ratings vs average, fig.height=20, fig.width=10}
+
+```{r plot owned vs rated over time}
+
+
+collections_info %>%
+        filter(type == 'boardgame') %>%
+        select(username, date, yearpublished, game_id, rating, own, prevowned) %>%
+        mutate(rated = case_when(is.na(rating) ~ 0,
+                                 TRUE ~ 1)) %>%
+        mutate(owned = case_when(own == 1 | prevowned == 1 ~ 1,
+                                 TRUE ~ 0)) %>%
+        select(-rating) %>%
+        melt(id.vars = c("username", "date", "yearpublished", "game_id")) %>%
+        filter(yearpublished > 1980) %>%
+        group_by(date, yearpublished, variable) %>%
+        summarize(n_games = sum(value),
+                  .groups = 'drop') %>%
+        filter(variable == 'owned' | variable == 'rated') %>%
+        ggplot(., aes(x= yearpublished,
+                      color = variable,
+                      y = n_games))+
+        geom_line(lwd=1.03)+
+        scale_color_manual(values = c("darkorange",
+                                      "blue"))+
+        theme_phil()+
+        my_caption
+
+```
+
+Certainly looks like people aren't getting newer games to the table in order to rate them. Whether the pandemic is the source of that, we can't be sure.
+
+## Ratings
+
+How do the users compare in their ratings to the average ratings on BoardGameGeek? Let's look at the top 50 games with the highest ratings in people's collections. To make this fancy, we'll plot the distribution of votes.
+
+```{r top ratings, fig.height=15, fig.width=8}
 
 set.seed(1999)
 samp_ratings = collections_info %>%
@@ -564,21 +672,39 @@ samp_ratings %>%
                        head(100) %>%
                        pull(game_id))) %>%
         ggplot(., aes(y=reorder(name, sample_mean),
+                      fill = stat(x),
                       x=rating))+
-        stat_density_ridges(alpha=0.8,
-                            color = 'white',
-                            quantile_lines = TRUE,
-                            quantile_fun = mean,
-                            quantiles = 2)+
+        geom_density_ridges_gradient(alpha = 0.8,
+                                     quantile_lines = T,
+                                     quantile_fun = mean,
+                                     color = 'white')+
+        scale_fill_gradient2_tableau(limits = c(5, 8),
+                                      oob = scales::squish)+
+        guides(fill = guide_colorbar(barwidth = 10,
+                                     barheight = 0.5,
+                                     title = 'rating',
+                                     title.position = 'top'))+
+        # stat_density_ridges(alpha=0.8,
+        #                     color = 'white',
+        #                     quantile_lines = TRUE,
+        #                     quantile_fun = mean,
+        #                     quantiles = 2)+
         theme_phil()+
+        theme(legend.title = element_text())+
         theme(panel.grid.minor = element_blank(),
               panel.grid.major = element_blank())+
-        coord_cartesian(xlim = c(0, 11))
+        coord_cartesian(xlim = c(0, 11))+
+        theme(axis.text.y = element_text(size=12))+
+        my_caption+
+        ylab("")+
+        ggtitle("Which Games are the Highest Rated?",
+                subtitle = str_wrap("Displaying distributions of ratings for games with highest ratings in sample of user collections. Filtering to games with at least 15 ratings.", 125))
+
 ```
 
-Lowest
+Now let's look at the lowest games rated.
 
-```{r lowest rated, fig.height=20, fig.width=10}
+```{r lowest ratings, fig.height=15, fig.width=8}
 
 # bottom
 samp_ratings %>%
@@ -586,189 +712,904 @@ samp_ratings %>%
                        tail(100) %>%
                        pull(game_id))) %>%
         ggplot(., aes(y=reorder(name, sample_mean),
+                      fill = stat(x),
                       x=rating))+
-        stat_density_ridges(alpha=0.8,
-                            color = 'white',
-                            quantile_lines = TRUE,
-                            quantile_fun = mean,
-                            quantiles = 2)+
+        geom_density_ridges_gradient(alpha = 0.8,
+                                     quantile_lines = T,
+                                     quantile_fun = mean,
+                                     color = 'white')+
+        scale_fill_gradient2_tableau(limits = c(5, 8),
+                                      oob = scales::squish)+
+        guides(fill = guide_colorbar(barwidth = 10,
+                                     barheight = 0.5,
+                                     title = 'rating',
+                                     title.position = 'top'))+
+        # stat_density_ridges(alpha=0.8,
+        #                     color = 'white',
+        #                     quantile_lines = TRUE,
+        #                     quantile_fun = mean,
+        #                     quantiles = 2)+
         theme_phil()+
+        theme(legend.title = element_text())+
         theme(panel.grid.minor = element_blank(),
               panel.grid.major = element_blank())+
-        coord_cartesian(xlim = c(0, 11))
+        coord_cartesian(xlim = c(0, 11))+
+        theme(axis.text.y = element_text(size=12))+
+        my_caption+
+        ylab("")+
+        ggtitle("Which Games are the Lowest Rated?",
+                subtitle = str_wrap("Displaying distributions of ratings for games with lowest ratings in sample of user collections. Filtering to games with at least 15 ratings.", 125))
 
 ```
 
 Most polarizing
 
-```{r lowest rated, fig.height=20, fig.width=10}
-
+```{r lowest rated, fig.height=15, fig.width=10}
 
 samp_ratings %>%
         filter(game_id %in% (sum_ratings %>% 
                                      arrange(desc(sd_ratings)) %>%
                                      head(100) %>%
                                      pull(game_id))) %>%
-        ggplot(., aes(y=reorder(name, sd_ratings),
+        ggplot(., aes(y=reorder(name, sample_mean),
+                      fill = stat(x),
                       x=rating))+
-        stat_density_ridges(alpha=0.8,
-                            color = 'white',
-                            quantile_lines = TRUE,
-                            quantile_fun = mean,
-                            quantiles = 2)+
+        geom_density_ridges_gradient(alpha = 0.8,
+                                     quantile_lines = T,
+                                     quantile_fun = mean,
+                                     color = 'white')+
+        scale_fill_gradient2_tableau(limits = c(5, 8),
+                                      oob = scales::squish)+
+        guides(fill = guide_colorbar(barwidth = 10,
+                                     barheight = 0.5,
+                                     title = 'rating',
+                                     title.position = 'top'))+
+        # stat_density_ridges(alpha=0.8,
+        #                     color = 'white',
+        #                     quantile_lines = TRUE,
+        #                     quantile_fun = mean,
+        #                     quantiles = 2)+
         theme_phil()+
+        theme(legend.title = element_text())+
         theme(panel.grid.minor = element_blank(),
               panel.grid.major = element_blank())+
         coord_cartesian(xlim = c(0, 11))+
         theme(axis.text.y = element_text(size=12))+
+        my_caption+
+        ylab("")+
         ggtitle("Which Games are the Most Polarizing?",
                 subtitle = str_wrap("Displaying distributions of ratings for games with highest variance in sample of user collections. Filtering to games with at least 15 ratings.", 125))
 
 
 ```
 
-Games most frequently owned
+Games most freqently owned and rated.
 
-```{r games owned, fig.height=8, fig.width=10}
-
-collections_info %>%
-        group_by(game_id, name) %>%
-        count() %>%
-        ungroup() %>%
-        slice_max(order_by = n,
-                  n = 100) %>%
-        ggplot(., aes(x=reorder(name,n),
-                      
-                      y=n))+
-        geom_col()+
-        theme_phil()+
-        coord_flip()+
-        theme(panel.grid.major = element_blank())
-
-```
-
-What are the most frequent combinations of games in collections?
-
-```{r make polot, fig.height=10, fig.width=10}
-spread_games = games_flattened %>%
-        mutate(game_id = as.integer(game_id)) %>%
-        filter(!(game_id %in% (game_expansions$expansion_id))) %>%
-        select(yearpublished, game_id, name) %>%
-        left_join(.,
-                  collections_info %>%
-                          mutate(game_id = as.integer(game_id)) %>%
-                          select(username, game_id, own, name) %>%
-                          filter(own==1) %>%
-                          mutate(username = paste("own", username, sep="_")) %>%
-                          pivot_wider(id_cols=c("game_id", "name"),
-                                      names_from = c("username"),
-                                      values_from = c("own")) %>%
-                          mutate_if(is.numeric, replace_na, 0),
-                  by = c("game_id", "name")
-                  ) %>%
-        mutate_if(is.numeric, replace_na, 0)
-        
-```
-
-```{r upset plot, fig.height=20, fig.width=10}
-
-spread_games %>%
-        select(-yearpublished, -game_id, -name)
-        mutate_if(is.numeric, as.integer) %>%
-        as.data.frame() %>%
-        upset(.,
-              nsets = 25,
-              show.numbers = F,
-              text.scale = 3,
-              point.size = 4,
-              line.size=1.5,
-              #    nintersects = 50,
-              mb.ratio = c(.4, .6),
-              mainbar.y.label = "# of Games Played \n by Combination of User",
-              sets.x.label = "# of Games by User",
-              order.by = "freq")
-
-```
-
+```{r games owned, fig.height=8, fig.width=10, warning=F, message=F}
 
 collections_info %>%
         filter(type == 'boardgame') %>%
-        group_by(game_id) %>%
-        mutate(users_own = sum(own)) %>%
-        arrange(desc(users_own))
-        ungroup() %>%
-        select(username, date, game_id, name, own, users_own)
-        select(-name, -users_own, -date) %>%
-        spread(game_id, own) %>%
-        mutate_if(is.numeric, replace_na, 0) %>%
-        filter(`13` == 1)
-
-# flip tp upset
-spread_names %>%
-        select(-username) %>%
-        mutate_if(is.numeric, as.integer) %>%
-        as.data.frame() %>%
-        upset(.,
-              nsets = 25,
-              show.numbers = F,
-              text.scale = 3,
-              point.size = 4,
-              line.size=1.5)
-              #    nintersects = 50,
-              mb.ratio = c(.4, .6),
-              mainbar.y.label = "# of Games Played \n by Combination of User",
-              sets.x.label = "# of Games by User",
-              order.by = "freq")
-
-
-    
-
-```
-
-
-```{r user average vs bgg average, fig.height=8, fig.width=10, warning=F, message=F}
-
-set.seed(1999)
-library(plotly)
-
-#ggplotly(
-collections_info %>%
-        filter(!(is.na(rating))) %>%
-        group_by(game_id, name, average, usersrated) %>%
-        summarize(sample_average = mean(rating),
-                  sample_ratings = n(),
+        filter(!(is.na(yearpublished))) %>%
+        select(username, yearpublished, date, game_id, name, rating, own, prevowned) %>%
+        mutate(owned = case_when(own == 1 | prevowned == 1 ~ 1,
+                                 TRUE ~ 0)) %>%
+        mutate(rated = case_when(is.na(rating) ~ 0,
+                                 TRUE ~ 1)) %>%
+        select(-rating) %>%
+        melt(id.vars = c("username", "date", "name", "yearpublished", "game_id")) %>%
+        filter(variable == 'owned' | variable == 'rated') %>%
+        group_by(game_id, yearpublished, variable, name) %>%
+        summarize(n = sum(value),
                   .groups = 'drop') %>%
-        mutate(diff = sample_average - average) %>%
-        filter(sample_ratings > 5) %>%
-        ggplot(., aes(x=sample_average,
-              #        size = sample_ratings,
-                  color = diff,
-                      label = name,
-                      y=average))+
-        geom_point()+
-        geom_text_repel(max.overlaps=25,
-                        size = 3)+
-        theme_phil()+
-        geom_abline(slope=1,
-                    intercept = 0,
-                    linetype = 'dotted',
-                    col = 'grey60')+
-     #   geom_smooth(show.legend=F)+
-        theme(legend.title = element_text())+
-        guides(color = guide_colorbar(title.position = 'top',
-                                      barheight = 0.5,
-                                      barwidth=15,
-                                    title = 'Sample Average - BGG Average'),
-               size = "none")+
-        scale_color_gradient(low = "red",
-                             high = "deepskyblue1",
-                             oob = scales::squish)
-        # scale_color_gradient2_tableau(limits = c(-4,
-        #                                          4),
-        #                               oob = scales::squish)
-
-# size = guide_legend(title.position = 'top',
-#                                    title = 'Ratings in Sample'),
-#                
+        ungroup() %>%
+        pivot_wider(., id_cols = c("name", "yearpublished", "game_id"),
+                    names_from = c("variable"),
+                    values_from = c("n")) %>%
+        select(yearpublished, game_id, name, everything()) %>%
+        mutate(diff = owned - rated) %>%
+        arrange(desc(diff)) %>%
+        mutate_at(c("yearpublished", "game_id"),
+                       ~ as.character(.)) %>%
+        DT::datatable()
 
 ```
+
+# Models
+
+I previously trained models for each user, but owing to storage I didn't save each user's model. We can just retrain here. This will require us to pull in functions for creating recipes and models at the user level.
+
+```{r get data ready for modeling}
+
+# Load previously queried training and test data from the local layer.
+games_datasets = readr::read_rds(here::here("active", "games_datasets.Rdata"))
+
+most_recent_date = as.Date(games_datasets$train$timestamp[1])
+
+my_caption = list(labs(caption = paste(paste("Data from boardgamegeek.com as of", most_recent_date),
+                        paste("Data and analysis at github.com/phenrickson/bgg"), sep="\n")))
+
+# collections_info %>%
+#         filter(type == 'boardgame') %>%
+#         select(username, date, yearpublished, game_id, rating, own, prevowned) %>%
+#         mutate(rated = case_when(is.na(rating) ~ 0,
+#                                  TRUE ~ 1)) %>%
+#         mutate(owned = case_when(own == 1 | prevowned == 1 ~ 1,
+#                                  TRUE ~ 0)) %>%
+#         mutate(owned = case_when())
+#         nest(-username)
+#         
+# # load local
+# active_games
+
+```
+
+
+
+```{r set up nested datasets, warning=F, message=F}
+
+collections_outcomes = collections_info %>%
+        filter(type == 'boardgame') %>%
+        filter(!(is.na(yearpublished))) %>%
+        select(username, yearpublished, date, game_id, name, rating, own, prevowned) %>%
+        mutate(owned = case_when(own == 1 | prevowned == 1 ~ 1,
+                                 TRUE ~ 0)) %>%
+        mutate(rated = case_when(is.na(rating) ~ 0,
+                                 TRUE ~ 1)) %>%
+        select(-rating, -prevowned, -name) %>%
+        melt(id.vars = c("yearpublished", "username","date", "game_id")) %>%
+        filter(value == 1) %>%
+        rename(outcome_type = variable,
+               outcome = value) %>%
+        nest(-date, -username, -outcome_type) %>%
+        arrange(username) %>%
+        rename(user_data = data) %>%
+        select(date, username, outcome_type, user_data)
+
+# games
+games = bind_rows(games_datasets$train,
+                  games_datasets$test)
+
+# split
+year_split = 2019
+
+# train
+train_games = games %>%
+        filter(yearpublished <= year_split)
+# test
+test_games = games %>%
+        filter(yearpublished > year_split) 
+
+# bake training
+# create recipe 
+prepped_recipe<- recipe(~ .,
+                x = train_games %>% unnest()) %>%
+        update_role(all_numeric(),
+                    new_role = "predictor") %>%
+        update_role(timestamp,
+                    usersrated,
+                    game_id,
+                    name,
+                    average,
+                    baverage,
+                    new_role = "id") %>%
+        step_filter(!is.na(yearpublished)) %>%
+        step_filter(
+                cat_collectible_components !=1 &
+                        cat_expansion_for_basegame != 1) %>% # remove specific categories that count expansions
+  #      step_filter(yearpublished > 1900) %>%
+        step_mutate(published_prior_1900 = case_when(yearpublished<1900 ~ 1,
+                                                     TRUE ~ 0)) %>%
+        step_mutate(yearpublished = case_when(yearpublished <= 1900 ~ 1900,
+                                              TRUE ~ as.numeric(yearpublished))) %>% # truncate yearpublished
+        # step_mutate(years_since_published = as.numeric(year(Sys.Date()))-yearpublished) %>%
+        step_impute_median(avgweight,
+                           minplayers,
+                           maxplayers,
+                           playingtime,
+                           minage) %>% # medianimpute numeric predictors
+        step_mutate(minplayers = case_when(minplayers < 1 ~ 1,
+                                           minplayers > 10 ~ 10,
+                                           TRUE ~ minplayers),
+                    maxplayers = case_when(maxplayers < 1 ~ minplayers,
+                                           maxplayers > 20 ~ 20,
+                                           TRUE ~ maxplayers)) %>% # truncate player range
+        step_mutate(time_per_player = playingtime/ maxplayers) %>% # make time per player variable
+        step_mutate_at(starts_with("cat_"),
+                       fn = ~ replace_na(., 0)) %>%
+        step_mutate_at(starts_with("mech_"),
+                       fn = ~ replace_na(., 0)) %>%
+        step_mutate_at(starts_with("des_"),
+                       fn = ~ replace_na(., 0)) %>%
+       step_mutate_at(starts_with("art_"),
+                       fn = ~ replace_na(., 0)) %>%
+        step_mutate_at(starts_with("pub_"),
+                       fn = ~ replace_na(., 0)) %>%
+        # step_mutate_at(starts_with("own"),
+        #                fn = ~ replace_na(., 0)) %>%
+        # step_mutate_at(starts_with("owned"),
+        #                fn = ~ replace_na(., 0)) %>%
+        # step_mutate_at(starts_with("rated"),
+        #                fn = ~ replace_na(., 0)) %>%
+        step_mutate(number_mechanics = rowSums(across(starts_with("mech_"))),
+                    number_categories = rowSums(across(starts_with("cat_")))) %>%
+      #              number_artists = rowSums(across(starts_with("art_")))) %>%
+        step_log(playingtime,
+                 time_per_player,
+                 offset = 1) %>%
+        step_zv(all_numeric_predictors()) %>%
+        step_nzv(all_predictors(),
+              freq_cut = 150/1) %>%
+        step_zv(all_predictors()) %>%
+        step_corr(all_predictors(),
+                          threshold = 0.95)
+
+# penalized logistic regression
+glmnet_class_mod<- 
+        logistic_reg(penalty = tune::tune(),
+                     mixture = 0.5) %>%
+        set_engine("glmnet")
+
+# specify grid for tuning
+glmnet_grid <- tibble(penalty = 10^seq(-4, -0.5, 
+                                       length.out = 30))
+
+# specify regression metrics
+reg_metrics<-metric_set(yardstick::rmse,
+                        yardstick::rsq,
+                        yardstick::mae,
+                        yardstick::mape)
+
+# specify regression metrics
+class_metrics<-metric_set(yardstick::roc_auc,
+                          yardstick::mn_log_loss)
+        
+# function for normalized recipe
+norm_recipe_function = function(df, setting) {
+        
+        # change to factor if classification
+        if (setting == 'classification') {df$outcome = as.factor(df$outcome)}
+        else if (setting == 'regression') {df$outcome = df$outcome} 
+        else {'select classification or regression'}
+        
+        norm_recipe = recipe_train <-
+                recipe(outcome ~ ., data = df) %>%
+                update_role(timestamp,
+                            usersrated,
+                            game_id,
+                            name,
+                            average,
+                            baverage,
+                            new_role = "id") %>%
+                step_zv(all_predictors()) %>%
+                step_corr(all_predictors(),
+                          threshold = 0.95) %>%
+                step_normalize(all_predictors())
+        
+}
+
+# function for fitting workflow using a selected model and recipe
+fit_workflow_function <- function(df, input_model, input_recipe, metrics) {
+        
+        # change to factor if classification
+        if (metrics == 'classification') {df$outcome = as.factor(df$outcome)}
+        else if (metrics == 'regression') {df$outcome = df$outcome} 
+        else {'select classification or regression'}
+        
+        # fit model
+        fit_wf <-
+                workflow() %>%
+                add_model(input_model) %>%
+                add_recipe(input_recipe) %>%
+                fit(df)
+}
+
+# function for tuning a workflow over folds
+tune_workflow_function <- function(df, input_model, input_recipe, input_grid, metrics) {
+        
+        # change to factor if classification
+        if (metrics == 'classification') {df$outcome = as.factor(df$outcome)}
+        else if (metrics == 'regression') {df$outcome = df$outcome} 
+        else {'select classification or regression'}
+        
+        # create folds
+        set.seed(1999)
+        train_folds = vfold_cv(df,
+                               strata = outcome,
+                               v = 5,
+                               repeats = 1)
+        
+        # if regression then
+        if (metrics == "regression") {
+                fit_wf <-
+                        workflow() %>%
+                        add_model(input_model) %>%
+                        add_recipe(input_recipe) %>%
+                        tune_grid(train_folds,
+                                  grid = input_grid,
+                                  control = control_grid(save_pred = TRUE),
+                                  metrics = reg_metrics)
+        } else if (metrics == "classification") {
+                fit_wf <-
+                        workflow() %>%
+                        add_model(input_model) %>%
+                        add_recipe(input_recipe) %>%
+                        tune_grid(train_folds,
+                                  grid = input_grid,
+                                  control = control_grid(save_pred = TRUE),
+                                  metrics = class_metrics)
+        } else {"select regression or classification"}
+}
+
+## for finalizing workflow
+# function to finalize workflow using tune results
+finalize_workflow_function<- function(df, input_model, input_recipe, tune_results, metrics) {
+        
+        # change to factor if classification
+        if (metrics == 'classification') {df$outcome = as.factor(df$outcome)}
+        else if (metrics == 'regression') {df$outcome = df$outcome} 
+        else {'select classification or regression'}
+        
+        #fit workflow on train data
+        fit_wf <-
+                workflow() %>%
+                add_model(input_model) %>%
+                add_recipe(input_recipe)
+        
+        # finalize workflow
+        final_wf <-
+                fit_wf %>%
+                finalize_workflow(tune_results) %>%
+                fit(df)
+}
+
+```
+
+Set up for models
+
+```{r bake training and join with user data, warning=F, message=F}
+
+# bake training set
+baked_train_games = prepped_recipe %>%
+        prep(train_games,  strings_as_factor =F) %>%
+        bake(new_data = NULL) %>%
+        mutate(type = "train") %>%
+        nest(-type)
+
+# train collections
+collections_train_obj = collections_outcomes %>%
+        unnest() %>%
+        filter(yearpublished <= year_split) %>%
+        nest(-date, -username, -outcome_type) %>%
+        rename(user_data = data) %>%
+        mutate(type = "train") %>%
+        select(date, type, username, outcome_type, user_data) %>%
+        left_join(., baked_train_games,
+                  by = "type") %>%
+        mutate(foo = map2(.x = user_data,
+                          .y = data,
+                          ~ .y %>% 
+                                  left_join(., .x,
+                                                    by = c("game_id",
+                                                           "yearpublished")) %>%
+                                  mutate(outcome = replace_na(outcome, 0)))) %>%
+        select(date, type, username, outcome_type, user_data, foo) %>%
+        rename(baked_data = foo)
+
+```
+
+
+```{r now train, warning=F, message=F}
+
+# # register cores
+# library(doParallel)
+# cl = parallel::detectCores()-1
+# registerDoParallel(cl)
+# 
+# # fit models to each collection, all at once
+# collections_model_obj = collections_train_obj %>%
+#                 filter(outcome_type == 'own') %>%
+#                 mutate(glmnet_tune = map(baked_data,
+#                                          ~ tune_workflow_function(df = .x,
+#                                                                   input_model = glmnet_class_mod,
+#                                                                   input_grid = glmnet_grid,
+#                                                                   input_recipe = norm_recipe_function(.x, setting = 'classification'),
+#                                                                   metrics = 'classification'))) %>%
+#                 mutate(glmnet_best = map(glmnet_tune, ~ .x %>% show_best(n=1))) %>%
+#                 mutate(glmnet_results = map2(.x = glmnet_tune,
+#                                              .y = glmnet_best,
+#                                              ~ .x %>% collect_predictions(parameters = .y) %>%
+#                                                      arrange(.row))) %>%
+#                 mutate(glmnet_fit = map2(.x = baked_data,
+#                                          .y = glmnet_best,
+#                                          ~ finalize_workflow_function(df = .x,
+#                                                                       input_model = glmnet_class_mod,
+#                                                                       tune_results = .y,
+#                                                                       input_recipe = norm_recipe_function(.x, setting = 'classification'),
+#                                                                       metrics = "classification")))
+# 
+# # save this beast so we dont have to run it again
+# readr::write_rds(collections_model_obj,
+#                  file = here::here("predict_user_collections/meta-analysis/files/", "collections_model_obj.Rds"))
+
+# load
+collections_model_obj = readr::read_rds(here::here("predict_user_collections/meta-analysis/files/", "collections_model_obj.Rds"))
+
+```
+
+resamples
+
+test out getting coefs and preds for each user
+
+```{r plot coefs, fig.height=10, fig.width=10}
+
+source(here::here("functions/rename_func.R"))
+
+sum_estimate = collections_model_obj %>%
+        mutate(glmnet_coefs = map(glmnet_fit, ~ .x %>% extract_fit_parsnip() %>%
+                                                  tidy())) %>%
+        select(username, type, outcome_type, glmnet_coefs) %>% 
+        unnest() %>%
+        filter(term != '(Intercept)') %>%
+        group_by(outcome_type, term) %>%
+        summarize(mean_estimate = mean(estimate),
+                  median_estimate = median(estimate))
+
+top_40 = sum_estimate %>%
+        arrange(desc(abs(mean_estimate))) %>%
+        head(40) %>%
+        pull(term)
+
+
+collections_model_obj %>%
+        mutate(glmnet_coefs = map(glmnet_fit, ~ .x %>% extract_fit_parsnip() %>%
+                                                  tidy())) %>%
+        select(username, type, outcome_type, glmnet_coefs) %>% 
+        unnest() %>%
+        filter(term != '(Intercept)') %>%
+        filter(term %in% top_40) %>%
+        mutate(term = rename_func(term)) %>%
+      #  group_by(term) %>%
+        # slice_max(order_by = abs(estimate),
+        #           n=25,
+        #           with_ties = F) %>%
+        ggplot(., aes(x= reorder(term, estimate),
+                      by = username,
+                      y = estimate))+
+        geom_jitter(alpha=0.6, width=0.1,
+                    height = 0.001)+
+        coord_flip()+
+        #scale_color_grey(start = 0.2, end = 0.6)+
+        scale_color_colorblind()+
+        theme_phil()+
+        theme(axis.text.y = element_text(size=rel(0.9)))+
+        geom_hline(yintercept = 0,
+                   linetype = 'dotted')+
+        xlab("Feature")+
+        ylab("Estimated Effect on Outcome")+
+        theme_phil()
+
+# top 20
+top_10 = sum_estimate %>%
+        arrange(desc(abs(mean_estimate))) %>%
+        head(15) %>%
+        pull(term)
+
+collections_model_obj %>%
+        mutate(glmnet_coefs = map(glmnet_fit, ~ .x %>% extract_fit_parsnip() %>%
+                                                  tidy())) %>%
+        select(username, type, outcome_type, glmnet_coefs) %>% 
+        unnest() %>%
+        filter(term != '(Intercept)') %>%
+        filter(term %in% top_10) %>%
+        select(-penalty) %>%
+        mutate(term = rename_func(term)) %>%
+        spread(term, estimate) %>%
+        select(-username, -type, -outcome_type) %>%
+        ggpairs()+
+        theme_phil()+
+        theme(panel.grid.major = element_blank(),
+              panel.grid.minor = element_blank())
+
+```
+
+```{r games from resampling, warning=F, message=F, fig.height=10}
+
+# function adding color to flextables
+col_func<- function(x) {
+  
+  breaks<-seq(0, 1, .05)
+  
+#  breaks = weight_deciles
+  colorRamp=colorRampPalette(c("white", "deepskyblue1"))
+  col_palette <- colorRamp(length(breaks))
+  mycut <- cut(x, 
+    breaks = breaks,
+    include.lowest = TRUE, 
+    right=T,
+    label = FALSE)
+  col_palette[mycut]
+  
+}
+
+# examine oos preds
+oos_raw= collections_model_obj %>%
+                select(username, outcome_type, baked_data, glmnet_results) %>% 
+                unnest() %>%
+                arrange(.row) %>%
+                select(username, yearpublished, outcome_type, game_id, name, outcome, .pred_1) %>%
+                rename(pred = .pred_1,
+                       actual = outcome) %>%
+                pivot_wider(., names_from = c("outcome_type"),
+                            values_from = c("pred", "actual")) %>%
+                mutate_if(is.numeric, round, 2) %>%
+                arrange(desc(pred_own)) %>%
+                mutate(game_id = as.character(game_id),
+                       yearpublished = as.character(yearpublished)) %>%
+                select(username, yearpublished, game_id, name, everything()) 
+
+# most recommended games
+sum_raw = oos_raw %>%
+        group_by(game_id, name, yearpublished) %>%
+        summarize(mean_pred = mean(pred_own),
+               sd_pred = sd(pred_own),
+               users = n_distinct(username),
+               in_collections = sum(actual_own),
+               .groups = 'drop')
+# table
+sum_raw %>%
+        arrange(desc(mean_pred)) %>%
+        mutate_if(is.numeric, round, 3) %>%
+                mutate_at(c("yearpublished", "game_id"),
+                       ~ as.character(.)) %>%
+        DT::datatable()
+
+# get ranks
+oos_preds_ranks = oos_raw %>%
+        select(username, yearpublished, game_id, name, pred_own, actual_own) %>% 
+        arrange(desc(pred_own)) %>%
+        mutate(n_games = n_distinct(game_id),
+               n_users = n_distinct(username)) %>%
+        group_by(username, yearpublished) %>%
+        ungroup() %>%
+        arrange(desc(pred_own)) %>%
+        group_by(username) %>%
+        mutate(rank = row_number()) %>%
+        select(n_games, n_users, yearpublished, game_id, name, everything()) %>%
+        mutate(rank_tier = factor(case_when(rank <=25 ~ '1-25',
+                                     rank >25 & rank<=50 ~ '26-50',
+                                     rank >50 & rank<=100 ~ '50-100',
+                                     rank >100 & rank<=200 ~ '101-200',
+                                     rank >201 & rank<=500 ~ '201-500',
+                                     TRUE ~ '500+'),
+                                  levels = c("1-25",
+                                             "26-50",
+                                             "50-100",
+                                             "101-200",
+                                             "201-500",
+                                             "500+")))
+# flextable
+oos_preds_ranks %>%
+        ungroup() %>%
+        mutate(n_users = n_distinct(username),
+               n_games = n_distinct(game_id)) %>%
+        group_by(game_id) %>%
+        mutate(median_prob = mean(pred_own),
+               median_rank = round(median(rank), 1),
+               sd_rank = round(sd(rank),1),
+               n_own = sum(actual_own),
+               perc_own = n_own / n_users) %>%
+        ungroup() %>%
+        group_by(n_users, n_games, n_own, perc_own, median_rank, median_prob, sd_rank, yearpublished, game_id, name, rank_tier) %>%
+        count() %>%
+        ungroup() %>%
+        mutate(perc = n/n_users) %>%
+    #    group_by(rank_tier) %>%
+        # pivot_wider(id_cols = c("outcome_type",
+        #                         "yearpublished",
+        #                         "game_id",
+        #                         "name"),
+        #             names_from = c("rank_tier"),
+        #             values_from = c("n", "perc"))
+        select(-n) %>%
+        spread(rank_tier, perc) %>%
+        mutate_if(is.numeric, replace_na, 0) %>%
+        arrange(desc(perc_own)) %>%
+        mutate_if(is.numeric, round, 2) %>%
+        select(-n_users, -n_games, -sd_rank, -median_rank) %>%
+        select(yearpublished, game_id, name, n_own, perc_own, median_prob, everything()) %>%
+        mutate_at(c("yearpublished", "game_id"),
+                       ~ as.character(.)) %>%
+        head(500) %>%
+        flextable() %>%
+        flextable::autofit() %>%
+        bg(., j=c("1-25",
+                  "26-50",
+                  "50-100",
+                  "101-200",
+                  "201-500",
+                  "500+"),
+           bg =col_func)
+
+# oos_raw %>%
+#         group_by(game_id, name, yearpublished) %>%
+#         mutate(mean_pred = mean(pred_own),
+#                sd_pred = sd(pred_own)) %>%
+#         ungroup() %>%
+#         filter(game_id %in% (sum_raw %>%
+#                        arrange(desc(mean_pred)) %>%
+#                        head(50) %>%
+#                        pull(game_id))) %>%
+#         mutate(actual_own = case_when(actual_own == 1 ~ 'yes',
+#                                       TRUE ~ 'no')) %>%
+#         ggplot(., aes(x=reorder(name, mean_pred),
+#                       y=pred_own,
+#                       color = actual_own,
+#                       by= username))+
+#         geom_jitter(width=0.1,
+#                     height = 0.001)+
+#         coord_flip()+
+#         theme_phil()+
+#         theme(axis.text.y = element_text(size=rel(0.8)))+
+#         scale_color_manual(values = c("grey40", "deepskyblue1"))
+
+
+
+```
+
+calibration
+
+```{r}
+
+oos_raw %>%
+        mutate(n_users = n_distinct(username)) %>%
+        ungroup() %>%
+        mutate(pred_prob = plyr::round_any(pred_own, .05)) %>%
+        group_by(pred_prob) %>%
+        summarize(n = n(),
+                  own = sum(actual_own)) %>%
+        mutate(actual_prob = own / n) %>%
+        ggplot(., aes(x=pred_prob,
+                      y=actual_prob))+
+        geom_line()+
+        geom_point(aes(size=n))+
+        theme_phil()+
+        geom_abline(intercept = 0,
+                    slope = 1,
+                    linetype = 'dashed',
+                    col = 'grey60')+
+        coord_cartesian(xlim = c(0, 0.9),
+                       ylim = c(0, 0.9))+
+        theme(legend.title = element_text())+
+        guides(size = guide_legend(title = "Number of Predictions",
+                                   title.position = 'top'))
+
+oos_raw %>%
+        group_by(yearpublished, username) %>%
+        mutate()
+        mutate(n_users = n_distinct(username)) %>%
+        ungroup() %>%
+        mutate(pred_prob = plyr::round_any(pred_own, .05)) %>%
+        group_by(pred_prob) %>%
+        summarize(n = n(),
+                  own = sum(actual_own)) %>%
+        mutate(actual_prob = own / n) %>%
+        ggplot(., aes(x=pred_prob,
+                      y=actual_prob))+
+        geom_line()+
+        geom_point(aes(size=n))+
+        theme_phil()+
+        geom_abline(intercept = 0,
+                    slope = 1,
+                    linetype = 'dashed',
+                    col = 'grey60')+
+        coord_cartesian(xlim = c(0, 0.9),
+                       ylim = c(0, 0.9))+
+        theme(legend.title = element_text())+
+        guides(size = guide_legend(title = "Number of Predictions",
+                                   title.position = 'top'))
+
+
+        # mutate(n_users = n_distinct(username)) %>%
+        # ungroup() %>%
+        # group_by(game_id, name, n_users) %>%
+        # summarize(median_prob = mean(pred_own),
+        #        n_own = sum(actual_own),
+        #        .groups = 'drop') %>%
+        # mutate(perc_own = n_own / n_users) %>%
+        # ggplot(., aes(x=median_prob,
+        #               label = name,
+        #               y=perc_own))+
+        # geom_point(alpha=0.8)+
+        # geom_text(check_overlap = T,
+        #           hjust =0.2)+
+        # theme_phil()+
+        # ggpubr::stat_cor(label.x = 0.3, label.y = 0.4,
+        #                  p.accuracy = 0.1,
+        #                  col = 'blue')+
+        # geom_smooth(formula = 'y~x',
+        #             method = 'lm')+
+        # geom_abline(intercept = 0,
+        #             slope = 1)+
+        # coord_cartesian(xlim = c(0,0.5),
+        #                 ylim = c(0, 0.5))
+
+
+
+```
+
+predict test set
+
+```{r}
+
+# bake the test set
+baked_test_games = prepped_recipe %>%
+        prep(train_games,  strings_as_factor =F) %>%
+        bake(new_data = test_games)
+
+# test preds
+test_preds = collections_model_obj %>%
+        select(username, outcome_type, glmnet_fit) %>%
+        #select(username, outcome_type, glmnet_fit, xgbTree_fit) %>%
+        mutate(glmnet_preds = map(glmnet_fit,
+                                  ~ .x %>%
+                                          predict(baked_test_games, type = 'prob') %>%
+                                          rename(glmnet = .pred_1) %>%
+                                          select(glmnet) %>%
+                                          mutate(.row = row_number())))%>%
+        # mutate(xgbTree_preds = map(xgbTree_fit,
+        #                            ~ .x %>%
+        #                              predict(baked_test, type = 'prob') %>%
+        #                              rename(xgbTree = .pred_1) %>%
+        #                              select(xgbTree) %>%
+        #                              mutate(.row = row_number()))) %>%
+        select(username, outcome_type, glmnet_preds) %>%
+        # select(username, outcome_type, glmnet_preds, xgbTree_preds) %>%
+        unnest() %>%
+        left_join(., test_games %>%
+                          mutate(.row = row_number()),
+                  by = ".row") %>%
+        mutate(user_variable = paste(outcome_type, username, sep="_"))
+
+# combine with collections
+# train collections
+collections_test_obj = collections_outcomes %>%
+        unnest() %>%
+        filter(yearpublished >= year_split) %>%
+        nest(-date, -username, -outcome_type) %>%
+        rename(user_data = data) %>%
+        mutate(type = "test") %>%
+        select(date, type, username, outcome_type, user_data) %>%
+        left_join(., baked_test_games %>%
+                          mutate(type = "test") %>%
+                          nest(-type),
+                  by = "type") %>%
+        mutate(foo = map2(.x = user_data,
+                          .y = data,
+                          ~ .y %>% 
+                                  left_join(., .x,
+                                                    by = c("game_id",
+                                                           "yearpublished")) %>%
+                                  mutate(outcome = replace_na(outcome, 0)))) %>%
+        select(date, type, username, outcome_type, user_data, foo) %>%
+        rename(baked_data = foo)
+
+
+```
+
+
+```{r}
+
+# calibration
+test_preds %>%
+        select(username, outcome_type, glmnet, own)
+        mutate(n_users = n_distinct(username)) %>%
+        ungroup() %>%
+        mutate(pred_prob = plyr::round_any(pred_own, .05)) %>%
+        group_by(pred_prob) %>%
+        summarize(n = n(),
+                  own = sum(actual_own)) %>%
+        mutate(actual_prob = own / n) %>%
+        ggplot(., aes(x=pred_prob,
+                      y=actual_prob))+
+        geom_line()+
+        geom_point(aes(size=n))+
+        theme_phil()+
+        geom_abline(intercept = 0,
+                    slope = 1,
+                    linetype = 'dashed',
+                    col = 'grey60')+
+        coord_cartesian(xlim = c(0, 0.75),
+                       ylim = c(0, 0.75))+
+        theme(legend.title = element_text())+
+        guides(size = guide_legend(title = "Number of Predictions",
+                                   title.position = 'top'))
+
+
+
+test_preds_ranks = test_preds %>%
+        select(username, outcome_type, yearpublished, game_id, name, glmnet) %>% 
+        arrange(desc(glmnet)) %>%
+        group_by(username, outcome_type, yearpublished) %>%
+        arrange(desc(glmnet)) %>%
+        mutate(rank = row_number()) %>%
+        mutate(rank_tier = factor(case_when(rank <=25 ~ '1-25',
+                                     rank >25 & rank<=50 ~ '26-50',
+                                     rank >50 & rank<=100 ~ '50-100',
+                                     rank >100 & rank<=200 ~ '101-200',
+                                     TRUE ~ '200+'),
+                                  levels = c("1-25",
+                                             "26-50",
+                                             "50-100",
+                                             "101-200",
+                                             "200+")))
+
+
+test_preds_ranks %>%
+        group_by(game_id) %>%
+        summarize(median_pred = median(glmnet)) %>%
+        left_join(., baked_test_games) %>%
+        ggplot(., aes(x=number_mechanics,
+                      label = name,
+               y= median_pred))+
+        geom_jitter(alpha=0.6)+
+        geom_text_repel(max.overlaps=50,
+                        size = 4)+
+        theme_phil()
+
+
+# function adding color to flextables
+col_func<- function(x) {
+  
+  breaks<-seq(0, 1, .05)
+  
+#  breaks = weight_deciles
+  colorRamp=colorRampPalette(c("white", "deepskyblue1"))
+  col_palette <- colorRamp(length(breaks))
+  mycut <- cut(x, 
+    breaks = breaks,
+    include.lowest = TRUE, 
+    right=T,
+    label = FALSE)
+  col_palette[mycut]
+  
+}
+
+test_preds_ranks %>%
+        ungroup() %>%
+        mutate(n_users = n_distinct(username)) %>%
+        group_by(game_id) %>%
+        mutate(avg_rank = round(median(rank), 1)) %>%
+        ungroup() %>%
+        group_by(n_users, avg_rank, outcome_type, yearpublished, game_id, name, rank_tier) %>%
+        count() %>%
+        ungroup() %>%
+        mutate(perc = n/n_users) %>%
+    #    group_by(rank_tier) %>%
+        # pivot_wider(id_cols = c("outcome_type",
+        #                         "yearpublished",
+        #                         "game_id",
+        #                         "name"),
+        #             names_from = c("rank_tier"),
+        #             values_from = c("n", "perc"))
+        select(-n) %>%
+        spread(rank_tier, perc) %>%
+        mutate_if(is.numeric, replace_na, 0) %>%
+        arrange(avg_rank) %>%
+        mutate_if(is.numeric, round, 2) %>%
+        select(-n_users) %>%
+        select(outcome_type, yearpublished, game_id, name, avg_rank, everything()) %>%
+        filter(yearpublished == 2021) %>%
+        mutate_at(c("yearpublished", "game_id"),
+                       ~ as.character(.)) %>%
+        flextable() %>%
+        flextable::autofit() %>%
+        bg(., j=c("1-25",
+                  "26-50",
+                  "50-100",
+                  "101-200",
+                  "200+"),
+           bg =col_func)
+
+
+```
+

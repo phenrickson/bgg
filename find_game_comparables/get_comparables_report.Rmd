@@ -7,7 +7,7 @@ output:
         toc: true
         toc_depth: 3
 params:
-  id: 228328
+  id: 161882
 ---
 
 ```{r global settings, echo=F, warning=F, message=F, results = 'hide'}
@@ -591,6 +591,7 @@ plot_df = df %>%
                                     variable == 'PC2' ~ 'PC2_Storytelling',
                                     variable == 'PC3' ~ 'PC3_Economy',
                                     variable == 'PC4' ~ 'PC4_Cooperation')) %>%
+      #                              variable == 'PC5' ~ 'PC5_Trains')) %>%
         filter(!is.na(variable)) %>%
         group_by(variable) %>%
         mutate(scale = scale(value, center=T, scale=T))
@@ -615,7 +616,7 @@ background = plot_df %>%
         theme(panel.grid.major = element_blank(),
               panel.grid.minor = element_blank())+
         ggtitle(paste("Which games are similar to ", game, "?", sep= ""),
-                subtitle = str_wrap("Placing games on first four principal components of variation: complexity, theme, economy, and coooperation.", 125))+
+                subtitle = str_wrap("Placing games on first five principal components of variation, which generally correspond complexity, theme, economy, and coooperation.", 125))+
         theme(panel.grid.major = element_blank(),
               panel.grid.minor = element_blank())+
         geom_vline(xintercept = 0,
@@ -720,13 +721,13 @@ pc_plot+
     annotate("label",
            x =2.5,
            y = -5.5,
-         label =  "Euros")+
+         label =  "Euros/Trains")+
   annotate("label",
            x=11,
            y = -3,
         label = "Simulation/Wargame")+
   ggtitle(paste("What type of game is ", record$name, "?", sep=""),
-          subtitle = str_wrap("Mapping all games on BGG by first two principal components of variation (complexity and theme), which identifies specific clusters of game types. The selected game and its nearest neighbors are highlighted to identify where they are placed in this mapping of games.", 125))
+          subtitle = str_wrap("Mapping all games on BGG by first two principal components of variation (complexity and storytelling), which identifies specific clusters of game types. The selected game and its nearest neighbors are highlighted to identify where they are placed in this mapping of games.", 125))
 
 ```
 
@@ -736,11 +737,36 @@ Placing games on the first four principal components, which I have found to loos
 
 ```{r examine nplot, fig.height=8, fig.width=10, warning=F, message=F}
 
+# reference ids
+plot_df_references = 
+        bind_rows(
+                plot_df %>%
+                        group_by(variable) %>% 
+                        slice_max(., order_by = value, n=2),
+                plot_df %>%
+                        group_by(variable) %>% 
+                        slice_min(., order_by = value, n=2))
+
+# selected game and its neighbors
 plot_df_neighbors = plot_df %>%
         filter(game_id %in% c(id, compare)) %>%
         mutate(name = factor(name, levels = rev(neighbors)[1:7]))
 
 background + 
+        geom_point(data = plot_df_references, 
+                         aes(x = variable,
+                             y=value,
+                             label = name),
+                         position = pos2,
+                   alpha=0.3)+
+        geom_text_repel(data = plot_df_references, 
+                         aes(x = variable,
+                             y=value,
+                             label = name),
+                         position = pos2,
+                         show.legend=F,
+                         alpha=0.4,
+                         size = 2)+
         # geom_jitter(data = plot_df %>%
         #                           filter(game_id %in% id),
         #                   aes(x = variable,
@@ -761,7 +787,7 @@ background +
                              y=value,
                              label = name),
                          position = pos2,
-                         max.overlaps=15,
+                         max.overlaps=14,
                          show.legend=F,
                          size = 3)+
         guides(label = "none",
@@ -772,21 +798,30 @@ background +
                               begin = 0,
                               end = 0.8)+
                   annotate("text",
+                           fontface = 2,
                          x= 1,
-                         y=c(-11, 15),
+                         y=c(-11, 15.5),
                          label = c("Simple/Short", "Complex/Lengthy"))+
                     annotate("text",
+                             fontface = 2,
                          x= 2,
-                         y=c(-10, 14),
+                         y=c(-13, 15.5),
                          label = c("Abstract", "Thematic/Storytelling"))+
                       annotate("text",
+                               fontface =2,
                          x= 3,
                          y=c(13),
                          label = c("Economic"))+
                       annotate("text",
+                               fontface = 2,
                          x= 4,
-                         y=c(-12, 13),
+                         y=c(-15, 13),
                          label = c("Social/Deception", "Adventure/Cooperation"))+
+                         #      annotate("text",
+                         #       fontface = 2,
+                         # x= 5,
+                         # y=c(-14, 12),
+                         # label = c("Cards", "Trains/Networks"))+
   xlab("")+
   ylab("Component Loading")
 
@@ -796,9 +831,20 @@ $$\\[0.05in]$$
 
 ## Comparing Games on Principal Components
 
-The chart below shows how `r paste(record$name[1])` compares to its nearest neighbors on each of the ten principal components. Similar games will have similar profiles in terms of their placement on each dimension. This can be a useful way to easily see the dimensions on which games resemble each other.
+The chart below shows how `r paste(record$name[1])` compares to its nearest neighbors on each of the ten principal components. Similar games will have similar profiles in terms of their placement on each dimension. This can be a useful way to easily see the dimensions on which games resemble each other. I've also plotted games that are at the tails of each component to get a reference point.
 
 ```{r line plot, fig.height=8, fig.width=10, warning=F, message=F}
+
+# reference ids
+profile_df_references = 
+        bind_rows(
+                profile_df %>%
+                        group_by(variable) %>% 
+                        slice_max(., order_by = value, n=2),
+                profile_df %>%
+                        group_by(variable) %>% 
+                        slice_min(., order_by = value, n=2)) %>%
+                filter(variable %in% paste("PC", seq(1,10), sep = ""))
 
 line_plot = profile_df %>%
         filter(variable %in% paste("PC", seq(1,10), sep = "")) %>%
@@ -806,10 +852,13 @@ line_plot = profile_df %>%
         #     mutate(name = paste(name, game_id, sep="_")) %>%
         mutate(name = factor(abbreviate(name,
                                         minlength=30),
-                             levels = abbreviate(neighbors,
+                             levels = abbreviate(rev(neighbors),
                                                  minlength=30))) %>%
         filter(game_id %in% c(id, compare)) %>%
-        mutate(name = factor(name, levels = rev(neighbors)[1:7])) %>%
+        # mutate(name = factor(abbreviate(name,
+        #                                 minlength=30), 
+        #                      levels = rev(abbreviate(neighbors[1:7],
+        #                                   minlength=30)))) %>%
         ggplot(., aes(x=variable,
                       y=value,
                       color = name,
@@ -836,7 +885,24 @@ line_plot = profile_df %>%
         ggtitle(paste("How are games similar to ", record$name[1], "?", sep=""),
             subtitle = str_wrap("Plotting selected games and its neighbors on each of the twenty principal components. Similar games will have a similar path along each of the components.", 125))
 
-line_plot
+line_plot +
+        geom_point(data = profile_df_references,
+                         aes(x = variable,
+                             y=value),
+                   color = 'grey40',
+                   show.legend = F,
+                   position = pos2,
+                   alpha=0.4)+
+        geom_text_repel(data = profile_df_references, 
+                         aes(x = variable,
+                             y=value,
+                             label = abbreviate(name,
+                                                minlength=50)),
+                         color = 'grey40',
+                         position = pos2,
+                         show.legend=F,
+                         alpha=0.4,
+                         size = 2)
         
 ```
 

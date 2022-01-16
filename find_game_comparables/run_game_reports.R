@@ -6,12 +6,25 @@ source(here::here("functions/get_bgg_data_from_github.R"))
 source(here::here("functions/run_game_report.R"))
 
 # # select agme ids
-#id = 331363
-#ids = 342942
-
 ids = c(340466,
-        295770,
-        331363)
+        331363,
+        342942,
+        9209,
+        228328,
+        300217,
+        283155,
+        161533,
+        343905,
+        237179,
+        23540,
+        237179,
+        326030,
+        350890,
+        348303,
+        299684,
+        342942,
+        317511,
+        139443)
 
 run_game_report(ids)
 
