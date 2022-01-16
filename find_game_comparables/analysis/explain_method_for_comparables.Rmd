@@ -118,7 +118,7 @@ Finding similar games amounts to measuring the distance between games and identi
 
 Let's start with a simple, uni-dimensional example. Let's say we have a universe of 26 games, each represented by a letter in the alphabet. 
 
-```{r create uni dimnesionsal, fig.height=2}
+```{r create uni dimnesionsal, fig.height=2, caption = 'Comparing units on one dimension'}
 
 alphabet = toupper(letters) %>%
         as_tibble() %>%
@@ -176,7 +176,7 @@ alphabet_dist %>%
         rownames_to_column(".") %>%
         flextable() %>%
         flextable::autofit() %>%
-        set_caption("Distances between units, unidimensional") %>%
+        set_caption("Distances between all units in unidimensional space") %>%
         bg(., j = LETTERS,
            bg = col_func)
         

@@ -1149,7 +1149,7 @@ votes_added_games %>%
 
 Adding 100k votes gives us the list of games that more or less maps to the evergreen games of the last two decades, and actually shows a decent balance of complex and simple games. I would argue that is is a stronger list to look at for people who are interested in the hobby but aren't necessarily going to be interested in chasing the hotness.
 
-## Interactive Table with Different Baseline Threshholds
+## Interactive Table with Different Baseline Votes Added
 
 I'll now put this same information into a datatable to make it a bit more interactive, you can sort and search for any game and see how it compares across the different thresholds.
 
