@@ -516,6 +516,8 @@ We can put this all together to now look at games that are rated highly after ad
 
 ```{r examining the output for complexity adjusted ratings, warning=F, message=F}
 
+source(here::here("functions/baverage_func.R"))
+
 # make flextable
 complexity_adjusted_ratings %>%
         mutate(name = abbreviate(name, minlength = 45)) %>%
@@ -523,23 +525,52 @@ complexity_adjusted_ratings %>%
         rename(AdjustedRating = adj_baverage,
                Game = name,
                ID = game_id,
+               Published = yearpublished,
                Complexity = avgweight,
                AdjustedRank = adj_rank,
                GeekRating = baverage,
                GeekRank = rank) %>%
   mutate(date = as.character(date)) %>%
-  select(date, ID, Game, GeekRank, AdjustedRank, GeekRating, AdjustedRating, Complexity) %>%
+        mutate(Published = as.character(Published)) %>%
+  select(Published, ID, Game, GeekRank, AdjustedRank, GeekRating, AdjustedRating, Complexity) %>%
   head(250) %>%
         flextable() %>%
         flextable::autofit() %>%
         bg(j = c('Complexity'),
-           bg = avgweight_func) 
+           bg = avgweight_func) %>%
+        bg(., j = c("GeekRating",
+                    "AdjustedRating"),
+           bg = baverage_func)
 
 ```
 
 This gets us a list of games that is wildly different than before, and it's a list of games that are much more palatable to "normal people". In my mind, Crokinole taking the top spot makes a ton of sense and I will die on this hill.
 
-## Comparing Geek and Complexity Adjusted Ratings
+## Interactive Table for Complexity Adjusted Ratings
+
+I'll make an interactive table here so it's easy to search for games and compare how games stack up on the different rankings.
+
+```{r interactie DT for complexity ratings, warning=F, message=F}
+
+complexity_adjusted_ratings %>%
+        mutate(name = abbreviate(name, minlength = 45)) %>%
+        mutate_if(is.numeric, round, 2) %>%
+        rename(AdjustedRating = adj_baverage,
+               Game = name,
+               Published = yearpublished,
+               ID = game_id,
+               Complexity = avgweight,
+               AdjustedRank = adj_rank,
+               GeekRating = baverage,
+               GeekRank = rank) %>%
+        mutate(Published = as.character(Published)) %>%
+  mutate(date = as.character(date)) %>%
+  select(Published, ID, Game, GeekRank, AdjustedRank, GeekRating, AdjustedRating, Complexity) %>%
+        DT::datatable(rownames = F)
+
+```
+
+## Analyze and Compare Geek and Complexity Adjusted Ratings
 
 Which games have moved up and down the most? We can look at the difference between the BGG Rank and the Complexity adjusted ranks.
 
