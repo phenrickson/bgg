@@ -845,7 +845,7 @@ background +
                          position = pos2,
                          max.overlaps=14,
                          show.legend=F,
-                         size = 3)+
+                         size = 2.5)+
         guides(label = "none",
                color = "none",
                size = "none")+
