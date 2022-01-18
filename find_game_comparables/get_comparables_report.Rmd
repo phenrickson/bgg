@@ -7,7 +7,7 @@ output:
         toc: true
         toc_depth: 3
 params:
-  id: 161882
+  id: 54998
 ---
 
 ```{r global settings, echo=F, warning=F, message=F, results = 'hide'}
@@ -562,7 +562,6 @@ neighbors_table %>%
         bg(., j = c("Complexity"),
            bg = avgweight_func)
         
-
 ```
 
 ## Plotting Comparable Games to **`r paste(record$name[1])`**
@@ -597,10 +596,13 @@ plot_df = df %>%
         mutate(scale = scale(value, center=T, scale=T))
 
 # jitter
-pos <- position_jitter(width = 0.15, seed = 2)
-pos2 <- position_jitter(width = 0.075, seed = 2)
+library(ggforce)
+set.seed(2)
+pos <- position_jitternormal(sd_x = 0.075, sd_y = 0.025)
+pos2 <- position_jitternormal(sd_x = 0.025, sd_y = 0.025)
 
 # make background plot
+set.seed(2)
 background = plot_df %>%
         ggplot(., aes(x=variable,
                       y = value))+
@@ -637,9 +639,15 @@ compare_full = c(neighbors_table %>%
 # all neighbors
 neighbors = c(game, neighbors_table %>%
                       group_by(Neighbor) %>%
-                      mutate(dupe = n_distinct(Neighbor)) %>%
-                      mutate(Neighbor = case_when(Neighbor == game ~ paste(Neighbor, Published, sep="_"),
-                                                  dupe > 1 ~ paste(Neighbor, Published, sep="_"),
+                      mutate(dupe = n()) %>%
+                      mutate(Neighbor = case_when(Neighbor == game ~ 
+                                                          paste(Neighbor, 
+                                                                ID,
+                                                                sep =" "),
+                                                  dupe > 1 ~ 
+                                                          paste(Neighbor, 
+                                                                ID,
+                                                                   sep=" "),
                                                   TRUE ~ Neighbor)) %>%
                       ungroup() %>%
                       pull(Neighbor)) %>%
@@ -737,6 +745,9 @@ Placing games on the first four principal components, which I have found to loos
 
 ```{r examine nplot, fig.height=8, fig.width=10, warning=F, message=F}
 
+arrow_style <- arrow(length = unit(.05, "inches"),
+                     type = "closed")
+
 # reference ids
 plot_df_references = 
         bind_rows(
@@ -752,7 +763,52 @@ plot_df_neighbors = plot_df %>%
         filter(game_id %in% c(id, compare)) %>%
         mutate(name = factor(name, levels = rev(neighbors)[1:7]))
 
+set.seed(2)
 background + 
+        geom_segment(alpha=0.2,
+                     aes(xend = 1, yend = -10), 
+                     x = 1, y = -6, 
+                     color = 'grey60',
+                     alpha = 0.2,
+               arrow = arrow_style)+
+        geom_segment(alpha=0.2,
+                     aes(xend = 1, yend = 14), 
+                     x = 1, y = 10,
+                     color = 'grey60',
+               arrow = arrow_style)+
+        geom_segment(alpha=0.2,
+                     aes(xend = 2, yend = -10), 
+                     x = 2, y = -5, 
+                     color = 'grey60',
+                     alpha = 0.2,
+               arrow = arrow_style)+
+        geom_segment(alpha=0.2,
+                     aes(xend = 2, yend = 15), 
+                     x = 2, y = 11,
+                     color = 'grey60',
+               arrow = arrow_style)+
+        geom_segment(alpha=0.2,
+                     aes(xend = 3, yend = -11), 
+                     x = 3, y = -6, 
+                     color = 'grey60',
+                     alpha = 0.2,
+               arrow = arrow_style)+
+        geom_segment(alpha=0.2,
+                     aes(xend = 3, yend = 14), 
+                     x = 3, y = 10,
+                     color = 'grey60',
+               arrow = arrow_style)+
+        geom_segment(alpha=0.2,
+                     aes(xend = 4, yend = -12), 
+                     x = 4, y = -6, 
+                     color = 'grey60',
+                     alpha = 0.2,
+               arrow = arrow_style)+
+        geom_segment(alpha=0.2,
+                     aes(xend = 4, yend = 14), 
+                     x = 4, y = 10,
+                     color = 'grey60',
+               arrow = arrow_style)+
         geom_point(data = plot_df_references, 
                          aes(x = variable,
                              y=value,
@@ -797,33 +853,33 @@ background +
         scale_color_viridis_d(option="magma",
                               begin = 0,
                               end = 0.8)+
-                  annotate("text",
+        annotate("text",
                            fontface = 2,
                          x= 1,
-                         y=c(-11, 15.5),
+                         y=c(-11, 15),
                          label = c("Simple/Short", "Complex/Lengthy"))+
-                    annotate("text",
+        annotate("text",
                              fontface = 2,
                          x= 2,
                          y=c(-13, 15.5),
                          label = c("Abstract", "Thematic/Storytelling"))+
-                      annotate("text",
+        annotate("text",
                                fontface =2,
                          x= 3,
-                         y=c(13),
-                         label = c("Economic"))+
-                      annotate("text",
+                         y=c(-12, 15),
+                         label = c("Conflict/Wargame", "Economic"))+
+        annotate("text",
                                fontface = 2,
                          x= 4,
-                         y=c(-15, 13),
+                         y=c(-14, 15),
                          label = c("Social/Deception", "Adventure/Cooperation"))+
                          #      annotate("text",
                          #       fontface = 2,
                          # x= 5,
                          # y=c(-14, 12),
                          # label = c("Cards", "Trains/Networks"))+
-  xlab("")+
-  ylab("Component Loading")
+        xlab("")+
+        ylab("Component Loading")
 
 ```
 
@@ -831,9 +887,9 @@ $$\\[0.05in]$$
 
 ## Comparing Games on Principal Components
 
-The chart below shows how `r paste(record$name[1])` compares to its nearest neighbors on each of the ten principal components. Similar games will have similar profiles in terms of their placement on each dimension. This can be a useful way to easily see the dimensions on which games resemble each other. I've also plotted games that are at the tails of each component to get a reference point.
+The chart below shows how `r paste(record$name[1])` compares to its nearest neighbors on each of the twenty principal components. Similar games will have similar profiles in terms of their placement on each dimension. This can be a useful way to easily see the dimensions on which games resemble each other. I've also plotted games that are at the tails of each component to get a reference point.
 
-```{r line plot, fig.height=8, fig.width=10, warning=F, message=F}
+```{r line plot, fig.height=8, fig.width=12, warning=F, message=F}
 
 # reference ids
 profile_df_references = 
@@ -844,16 +900,16 @@ profile_df_references =
                 profile_df %>%
                         group_by(variable) %>% 
                         slice_min(., order_by = value, n=2)) %>%
-                filter(variable %in% paste("PC", seq(1,10), sep = ""))
+                filter(variable %in% paste("PC", seq(1,20), sep = ""))
 
 line_plot = profile_df %>%
-        filter(variable %in% paste("PC", seq(1,10), sep = "")) %>%
+        filter(variable %in% paste("PC", seq(1,20), sep = "")) %>%
         filter(game_id %in% c(id, compare_full)) %>%
         #     mutate(name = paste(name, game_id, sep="_")) %>%
         mutate(name = factor(abbreviate(name,
-                                        minlength=30),
+                                        minlength=20),
                              levels = abbreviate(rev(neighbors),
-                                                 minlength=30))) %>%
+                                                 minlength=20))) %>%
         filter(game_id %in% c(id, compare)) %>%
         # mutate(name = factor(abbreviate(name,
         #                                 minlength=30), 
@@ -874,7 +930,7 @@ line_plot = profile_df %>%
      #   scale_color_colorblind()+
         theme(legend.position = "right")+
         xlab("")+
-        ylab("Component Loading")+
+        ylab("Component Score")+
         theme(panel.grid.minor = element_blank())+
         scale_color_viridis_d(option = "magma",
                                       begin = 0,
@@ -902,7 +958,9 @@ line_plot +
                          position = pos2,
                          show.legend=F,
                          alpha=0.4,
-                         size = 2)
+                         size = 2)+
+        theme(panel.grid.major.y = element_blank())
+
         
 ```
 
@@ -912,6 +970,11 @@ We can also use a tile plot to view each of the neighbors across every principal
 
 profile_df %>%
         filter(game_id %in% c(id, compare_full)) %>%
+        mutate(name_id = paste(name, game_id, sep=" ")) %>%
+        mutate(dupe = case_when(name_id %in% neighbors ~ 1,
+               TRUE ~ 0)) %>%
+        mutate(name = case_when(dupe ==1 ~ name_id,
+                                TRUE ~ name)) %>%
         #     mutate(name = paste(name, game_id, sep="_")) %>%
         mutate(name = factor(abbreviate(name,
                                         minlength=30),
@@ -920,15 +983,17 @@ profile_df %>%
     #    mutate(scale_round = round(scale, 2)) %>%
         ggplot(., aes(x=variable,
                       y=name,
-                      color = value,
                       fill = value))+
-        geom_tile()+
+        geom_tile(color = 'white',
+                  color = 'grey50')+
+        geom_text(aes(label = round(value, 2)),
+                  size = 2.5)+
         theme_phil()+
         theme(legend.title = element_text())+
         guides(color = "none",
                fill = guide_colorbar(barheight=0.5,
                                      barwidth=10,
-                                     title = "Component Loading",
+                                     title = "Low                     High",
                                      #  title = "              Z Score",
                                      title.position = "top"))+
         theme(legend.position = "top")+
@@ -936,12 +1001,11 @@ profile_df %>%
         ylab("")+
         theme(panel.grid.minor = element_blank(),
               panel.grid.major = element_blank())+
-        scale_color_viridis(option="magma",
-                            limits = c(-5,5),
-                            oob = scales::squish)+
-        scale_fill_viridis(option="magma",
-                           limits = c(-5,5),
-                           oob = scales::squish)+
+        scale_fill_gradient2(low = "red",
+                             mid = "white",
+                             high = "blue",
+                             limits = c(-5, 5),
+                             oob = scales::squish)+
         ggtitle(paste("How are games similar to ", record$name[1], "?", sep=""),
             subtitle = str_wrap("Placing selected game and its neighbors on each of the ten principal components. Similar games will have similar profiles across each of the components.", 125))
 
@@ -955,7 +1019,7 @@ To gain a better understanding of these principal components, we can look at the
 
 For instance, on the first principal component (PC1), **time per player**, **average weight**, and **playing time** have the highest positive loadings, while **party game** and **max players** have negative loadings. This indicates that this component seems to map to a game's complexity - longer, more complex games will have high positive scores on this component while simpler, shorter, party games with lots of players will have low scores. 
 
-```{r examine variable loadings, warning=F, message=F, fig.height=12, fig.width=10}
+```{r examine variable loadings, warning=F, message=F, fig.height=20, fig.width=10}
 
 unsupervised_neighbor_components = 
         readr::read_rds(here::here("active", "unsupervised_obj_components.Rdata")) 
@@ -963,23 +1027,9 @@ unsupervised_neighbor_components =
 source(here::here("functions/rename_func.R"))
 
 unsupervised_neighbor_components %>%
-  filter(component == 'PC1' | 
-           component == 'PC2' | 
-           component == 'PC3' | component == 'PC4' |
-           component == 'PC5' | component == 'PC6' |
-           component == 'PC7' | component == 'PC8' |
-           component == 'PC9' | component == 'PC10') %>%
-  mutate(component = factor(component,
-                            levels = c("PC1",
-                                       "PC2",
-                                       "PC3",
-                                       "PC4",
-                                       "PC5",
-                                       "PC6",
-                                       "PC7",
-                                       "PC8",
-                                       "PC9",
-                                       "PC10"))) %>%
+        filter(component %in% paste("PC", seq(1,20), sep="")) %>%
+        mutate(component = factor(component,
+                                 levels = paste("PC", seq(1,20), sep=""))) %>%
   group_by(dataset, component) %>%
   slice_max(., order_by = abs(value),
             n = 15) %>%
@@ -997,9 +1047,11 @@ unsupervised_neighbor_components %>%
   xlab("contribution")+
   guides(fill = guide_colorbar(barwidth = 10,
                                barheight=0.5))+
-  scale_fill_viridis(option="magma",
-                                      begin = 0,
-                                      end = 0.8)+
+        scale_fill_gradient2(low = "red",
+                             mid = "white",
+                             high = "blue",
+                            # limits = c(-5, 5),
+                             oob = scales::squish)+
   ggtitle("What contributes to each principal component?")+
   guides(fill = "none")
         

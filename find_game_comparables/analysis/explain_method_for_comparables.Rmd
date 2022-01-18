@@ -232,7 +232,7 @@ active_games %>%
 
 As before, this is just one dimension on which we could compare games. We'll take a sample of 25 games and place them on this dimension of complexity.
 
-```{r get sample and place, warning=F,fig.height=4, message=F}
+```{r get sample and place, warning=F,fig.height=3, message=F, caption = "Placing a sample of games by complexity"}
 
 set.seed(9)
 samp_games = active_games %>%
@@ -301,12 +301,13 @@ samp_games_dist %>%
         flextable() %>%
         flextable::autofit() %>%
         bg(., j = names(samp_games_dist[,-1]),
-           bg = dist_func)
+           bg = dist_func) %>%
+        set_caption("Distance matrix between games in sample using complexity")
 
 
 ```
 
-So in this, Pandemic's nearest neighbors are, interestingly, another co operative game, followed by some lighter, more framily friendly strategy games.
+So in this small dataset, Pandemic's nearest neighbors are are another cooperative game, followed by some lighter, more family friendly strategy games.
 
 ```{r filter to neighbor within games}
 
@@ -319,7 +320,8 @@ samp_games_dist %>%
         flextable() %>%
         flextable::autofit() %>%
         bg(., j = c("dist"),
-           bg = dist_func)
+           bg = dist_func) %>%
+        set_caption ("Pandemic's nearest neighbors in sample based on complexity")
 
 ```
 
@@ -336,7 +338,9 @@ samp_games_dist %>%
         flextable() %>%
         flextable::autofit() %>%
         bg(., j = c("dist"),
-           bg = dist_func)
+           bg = dist_func) %>%
+        set_caption ("Teotihuacan's nearest neighbors in sample based on complexity")
+
 
 ```
 
@@ -365,9 +369,47 @@ active_games_dist = active_games %>%
 
 ```
 
-This means, if you like Inis, you'll like... 
+We can see the problem we're about to hit if we just try to visualize where every individual game falls on complexity.
 
-```{r full games comparing on complexity, warning=F, message=F}
+```{r placing all games on complexity, fig.height=3, warning=F}
+
+library(ggforce)
+
+set.seed(1)
+pos = position_jitternormal(sd_y = 0.025)
+
+jitter_complexity = active_games %>%
+        filter(!is.na(avgweight)) %>%
+        filter(!is.na(yearpublished)) %>%
+        ggplot(., aes(x=avgweight,
+                      label = name,
+                      y=0)) +
+        geom_point(position = pos,
+                   alpha = 0.10)+
+        geom_text(position = pos,
+                  check_overlap = T,
+                  vjust = -2,
+                  size = 3,
+                  alpha = 0.25)+
+        theme_phil()+
+        theme(axis.line.y=element_blank(),
+              axis.text.y=element_blank(),
+                  axis.ticks.y=element_blank(),
+                  axis.title.y=element_blank(),
+                  panel.grid.minor.y=element_blank(),
+                  panel.grid.major.y=element_blank(),
+              panel.grid.minor = element_blank(),
+              panel.grid.major = element_blank())
+
+jitter_complexity
+
+```
+
+If you go out to the tails, you might be able to use complexity alone to find some games that are similar. But if you look at a game right in the thick of the distribution, you're going to quickly be overwhelmed and find tons of games.
+
+For instance, you might like Inis. If you look for games that are similar to Inis in complexity, you'll find...
+
+```{r full games comparing on complexity inis, warning=F, message=F}
 
 active_games_dist %>%
         rownames_to_column("game") %>%
@@ -386,9 +428,40 @@ active_games_dist %>%
         bg(., j = c("dist"),
            bg = dist_func) %>%
                 set_caption("Nearest neighbors for Inis using only complexity")
+
+temp = active_games %>%
+        filter(name == 'Inis')
+
+```
+        
+        
+Which, if you know anything about Inis, doesn't seem *quite* right. But the reason these games are deemed similar is that they're all right in a pretty thick part of the distribution.
+
+```{r full games comparing on complexity inis 2, warning=F, message=F}
+
+set.seed(1)
+pos = position_jitternormal(sd_y = 0.025)
+
+jitter_complexity +
+        geom_point(data = temp,
+                   aes(x=avgweight,
+                       label = name,
+                       y=0),
+                   color = "blue",
+                   size = 3) +
+        geom_label_repel(data = temp,
+                   aes(x=avgweight,
+                       label = name,
+                       y=0),
+                   color = "blue",
+                   size = 3)+
+        theme_bw(16)+
+        facet_zoom(xlim = c(temp$avgweight-0.3, 
+                            temp$avgweight+0.3),
+                   horizontal = T)
 ```
 
-And if you like War of the Ring, you'll like...
+We can do the same thing with a game like War of the Ring, which is a bit higher on the distribution, so it has fewer games next it.
 
 ```{r example 2 from uni complexity, warning=F, message=F}
 
@@ -409,13 +482,36 @@ active_games_dist %>%
         bg(., j = c("dist"),
            bg = dist_func) %>%
         set_caption("Nearest neighbors for War of the Ring using only complexity")
+
+temp = active_games %>%
+        filter(name == 'War of the Ring: Second Edition')
+
+jitter_complexity +
+        geom_point(data = temp,
+                   aes(x=avgweight,
+                       label = name,
+                       y=0),
+                   color = "blue",
+                   size = 3) +
+        geom_label_repel(data = temp,
+                   aes(x=avgweight,
+                       label = name,
+                       y=0),
+                   color = "blue",
+                   size = 3)+
+        theme_bw(16)+
+        facet_zoom(xlim = c(temp$avgweight-0.3, 
+                            temp$avgweight+0.3),
+                   horizontal = T)
+
 ```
 
-If you're looking at this and going, 'this doesn't feel right, these games aren't that similar', then you've spotted the problem. We've followed the steps we outlined, it sounded well and good, but we've hit a snag at the all important next step:
+But we still end up with a list of games that isn't really what we want. If you're looking at this and going, 'this doesn't feel right, these games aren't that similar', then you've spotted the problem. We've followed the steps we outlined, it sounded well and good, but we've hit a snag at the all important next step:
 
 5. Examine nearest neighbors and evaluate the results.
 
-In other words, we're looking at the output and realizing that it isn't quite mapping to what we want. How do we even know what we want? How are we determining that? Our gut, mostly. Our theoretical concept in our heads of what it means for two games to be similar. If we think about our mental map, we typically think about board concepts like complexity, but also the theme, the mechanics in the game, etc.
+In other words, we're looking at the output and realizing that it isn't quite mapping to what we want, theoretically.
+How do we even know what we want? How are we determining that? Our gut, mostly. Our theoretical concept in our heads of what it means for two games to be similar. If we think about our mental map, we typically think about board concepts like complexity, but also the theme, the mechanics in the game, etc.
 
 Right now, using only complexity, we're missing all of this other stuff that we use to compare games. Is Inis really similar to Chocolate Factory because they have a similar complexity rating? Is War of the Ring anything like an 18XX game?
 
@@ -423,14 +519,20 @@ In order to get closer to our theoretical concept, we need to introduce some mor
 
 ```{r remove pieces from uni complexity}
 
-rm(active_games_dist)
+rm(active_games_dist,
+   temp)
 
 ```
 
 
 # Finding Similar Games in Two Dimensions
 
-Let's add an additional dimension on which to compare games. Ideally, we'd like to have answers to two main questions about a game. How complex is it and how thematic is it? We have a measure of the first, but we don't really have a measure of the latter. We could in theory pick any dimensions on which to compare games, why am I caring about complexity and theme? It goes back to the measurement concept I have in my head, and how I think about comparing games. But in practice, we could compare games on any dimension. We have *a lot of features* on games, what should we compare them on?
+Let's add an additional dimension on which to compare games. Ideally, we'd like to have answers to our two main questions about a game. 
+
+1) How complex is it?
+2) How thematic is it?
+
+We have a measure of the first, but we don't really have a measure of the latter. We could in theory pick any dimensions on which to compare games, why am I caring about complexity and theme? It goes back to the measurement concept I have in my head, and how I think about comparing games. But in practice, we could compare games on any dimension. We have *a lot of features* on games, what should we compare them on?
 
 ```{r query tables with game information}
 
@@ -606,7 +708,7 @@ baked_train_norm= recipe_norm_prep %>%
 ```
 
 
-```{r corrplot, fig.height=10, fig.width=10}
+```{r corrplot, fig.height=10, fig.width=10, caption = "Correlation between all features in dataset"}
 
 baked_train %>%
         select_if(is.numeric) %>%
@@ -616,12 +718,13 @@ baked_train %>%
         theme(axis.text.x = element_text(size = 4),
               axis.text.y = element_text(size = 4))
 
-
 ```
+
+## Dimension Reduction via PCA
 
 Clearly, we have many dimensions on which we might compare games. We could pick out a few that we think matter and focus on them. Or, we could take another approach and try to reduce the dimensionality of this dataset while preserving the variation. That is, we can attempt to find linear combinations of the features we have that maximize the variation. This is a method called principal components analysis.
 
-We'll bake our training set using the recipe with a PCA at the end.
+We'll bake our training set and then run PCA.
 
 ```{r bake melt and nest, warning=F, message=F, echo=T}
 
@@ -632,6 +735,10 @@ pca_rotation= recipe_pca %>%
         rename_all(funs(gsub("PC0", "PC", gsub("PC00", "PC", .))))
 
 # pca estimates
+pca_estimates =recipe_pca %>%
+        prep(games_train, strings_as_factor = F)
+
+# pca components
 pca_components = tidy(recipe_pca,
                      id = "pca")
 
@@ -641,7 +748,7 @@ pca_variance = tidy(recipe_pca,
 
 ```
 
-We can then look to see how much of the variation each principal component explains using what is called a scree plot.  In this case, we can see that the first principal component explains about 5% of the overall variation. The first 10 components or so look to explain about 25% of the overall variation.
+We can then look to see how much of the variation each principal component explains using what is called a scree plot. In this case, we can see that the first principal component explains about 5% of the overall variation. The first 10 components or so look to explain a little under 25% of the overall variation.
 
 ```{r scree plot}
 
@@ -658,13 +765,14 @@ pca_variance %>%
         facet_wrap(terms ~.,
              ncol =1,
              scales = "free")+
-        theme_phil()
+        theme_phil()+
+        geom_vline(xintercept = 10)
 
 ```
 
-To get a sense of what this looks like, we can place every game by their loadings on the first two principal components.
+To get a sense of what this looks like, we can place every game by their values on the first two principal components.
 
-```{r pca two dimensions plot, fig.height=10, fig.width=10} 
+```{r pca two dimensions plot, fig.height=10, fig.width=10, caption = "Placing all games by first principal components of variation"} 
 
 pca_rotation %>%
         ggplot(., aes(x=PC1, 
@@ -685,7 +793,9 @@ pca_rotation %>%
 
 ```
 
-This is a plot of every game in our training set by their positions on the first two principal components. What are these two components exactly? They are linear combinations of the features in our dataset that maximized the variance. 
+This is a plot of every game in our training set by their values on the first two principal components. What are these two components exactly? Each component is a linear combinations of features in our dataset that maximized the variance while being orthogonal (uncorrelated) with each other. Variables either contribute positively or negatively to each component, and the size of the loading determines how much that variable affects the component.
+
+We can plot the loading of the variables to the first principal component (filtering to the 40 variables with the highest values) to get a sense of what's going on. The first component looks to map to complexity - time per player, average weight, overall playing time, and number of mechanics all increase where your value on this component, while being a party game, a card game, having a higher number of players reduce your value. 
 
 ```{r component loadings for first components}
 
@@ -715,70 +825,9 @@ pca_components %>%
 
 ```
 
+We can do the same thing for the second component. A game's value on this component increases with the number of categories the game has (not sure what to make of that just yet), variable player powers, storytelling, role playing, fighting, minatures, adventure, and decreases with if your game is econommic, has networks and trains, tile placement...
 
-The first component looks to map to complexity - time per player, average weight, overall playing time, and number of mechanics all increase where your value on this component, while being a party game, a card game, having a higher number of players reduce your value. If we look at the top 10 and bottom 10 games on this component, we can get a sense of what's going on. 
-
-```{r sort component 1}
-
-top_and_bottom = 10
-        
-pca_rotation %>%
-        select(yearpublished, game_id, name, PC1) %>%
-        arrange(desc(PC1)) %>%
-        filter(row_number() > max(row_number()) - top_and_bottom | row_number() <= top_and_bottom) %>%
-        mutate_at(c("yearpublished", "game_id"),
-                 ~ as.character(.)) %>%
-        mutate_if(is.numeric, round, 3) %>%
-        flextable() %>%
-        autofit()
-
-```
-
-The first component seems to be a proxy for complexity. Average weight is a strong contributor to its value, but it also looks at some other things that we might expect to matter for the idea of 'how complex is a game'.
-
-```{r compare avgweight to PC1}
- 
-# compare compoennt 
-baked_train %>%
-        left_join(., pca_rotation %>%
-                  select(game_id, starts_with("PC")),
-                  by = c("game_id")) %>%
-        ggplot(., aes(y=PC1, x=avgweight))+
-        geom_point(alpha=0.5)+
-        stat_cor(p.accuracy = 0.1,
-                 col = 'blue')+
-        geom_smooth(method = 'lm',
-                    formula = 'y ~ x')+
-        theme_phil()
-
-
-```
-
-If we zoom in on games at the highest values of the first principal component, we see some familar names.
-
-```{r zoom in on most complex, fig.height=10, fig.width=10}
-
-library(ggforce)
-
-pca_rotation %>%
-        ggplot(., aes(x=PC1, 
-                label = name,
-                y=PC2))+
-        geom_point(alpha=0.5)+
-        geom_text(check_overlap = T,
-             size = 3,
-            position=position_jitter(width=0.2,height=0.2))+
-         # theme_phil()+
-        my_caption+
-        xlab("First Principal Component")+
-        ylab("Second Principal Component")+
-        facet_zoom(xlim = c(5,14),
-                   zoom.size = 3)+
-        theme_bw(16)
-
-```
-
-But what about that second component? A game's value on this component increases with the number of categories the game has (not sure what to make of that just yet), variable player powers, storytelling, role playing, fighting, minatures, adventure, and decreases with if your game is econommic, has networks and trains, tile placement...
+This seems to be picking up on that idea of theme, or storytelling. Games that are highly focused on role playing, fighting, adventure, miniatures tend to be of the American school of design that focuses on player interaction to create conflict and stories. In contrast, games focused on economy, tile placement, and route building tend to be of the European school of design, where interaction isn't as important as creating an engaging puzzle. 
 
 ```{r contributions to second principal compoent}
 
@@ -808,23 +857,59 @@ pca_components %>%
 
 ```
 
-This looks to me like it's mapping to how thematic a game is, or to use a more antiquated term, how 'Ameritrashy' a game is. The games at the top of this component are all about storytelling, role playing, deception, while the bottom games are mostly tight economic affairs centered around trains.
+If we plot the loading scores for these two components, we can see how we get our mapping of games. 
 
-```{r top and bottom for second component}
+```{r show loadings, warning=F, message=F}
 
-top_and_bottom = 10
-        
-pca_rotation %>%
-        select(yearpublished, game_id, name, PC2) %>%
-        arrange(desc(PC2)) %>%
-        filter(row_number() > max(row_number()) - top_and_bottom | row_number() <= top_and_bottom) %>%
-        mutate_at(c("yearpublished", "game_id"),
-                 ~ as.character(.)) %>%
-        mutate_if(is.numeric, round, 3) %>%
-        flextable() %>%
-        autofit()
+# define arrow style
+arrow_style <- arrow(length = unit(.05, "inches"),
+                     type = "closed")
 
+# pca_loadings
+pca_wider = pca_components %>%
+          tidyr::pivot_wider(names_from = component, id_cols = terms)
+
+pca_components %>%
+        filter(id == 'pca') %>%
+        mutate(abs_value = abs(value)) %>%
+        tidyr::pivot_wider(names_from = component, id_cols = terms) %>%
+        arrange(desc(abs(PC1))) %>%
+        mutate(terms = rename_func(terms)) %>%
+        head(100) %>%
+        ggplot(., aes(x=PC1, 
+                y=PC2))+
+        geom_point(alpha=0)+
+        geom_segment(alpha=0.5,
+                     aes(xend = PC1, yend = PC2), 
+                     x = 0, y = 0, 
+                     color = 'grey60',
+                     alpha = 0.8,
+               arrow = arrow_style)+
+          geom_text(aes(x = PC1, y = PC2, label = terms), 
+                    check_overlap=T,
+            hjust = 0, 
+            vjust = 1,
+            size = 3)+
+        my_caption+
+        xlab("First Principal Component")+
+        ylab("Second Principal Component")+
+        geom_vline(xintercept = 0,
+                   linetype = 'dashed')+
+        geom_hline(yintercept = 0,
+                   linetype = 'dashed')+
+        theme_phil()+
+        coord_cartesian(xlim = c(-0.2,
+                                 0.4))
+ 
 ```
+
+Games that are high on the first component (complexity) and the second component (storytelling) end up in the top right. This is where we find highly thematic games like Mansions of Madness, Gloomhaven, Betrayal at House on the Hill, Descent.  
+
+We get a big group of wargames off to the bottom right with games that are highly complex with less of an emphasis on storytelling (I can see one arguing with me on whether this is the right term). The top left is mostly party games and social deduction games, while the bottom left looks to be lighter, abstract family games. 
+
+Games we would think of as Euros look to cluster in the bottom center.
+
+## Finding Distances in Two Dimensions
 
 What was the point of this exercise? The first two principal components look to map, somewhat loosely, to how complex a game is and how thematic it is. This means, we now have two dimensions on which we can compare games. If we go back to our small sample of games from earlier, we can plot them on these two dimensions
 
@@ -1345,29 +1430,42 @@ But are the other two measures good? If we place Inis on the map of all games by
 
 ```{r zoom in on Inis, fig.height=8, fig.width=10}
 
+temp =  pca_rotation %>%
+                           filter(name == 'Inis')
+        
 pca_rotation %>%
-        mutate(highlight = case_when(name == 'Inis' ~ 'yes',
-                                     TRUE ~ 'no')) %>%
         ggplot(., aes(x=PC1, 
-                label = name,
-                color = highlight,
+                      label = name,
                 y=PC2))+
-        geom_point(alpha=0.5)+
+        geom_point(alpha=0.25)+
         geom_text(check_overlap = T,
-             size = 4,
+                  alpha = 0.8,
+             size = 3,
             position=position_jitter(width=0.01,height=0.01))+
          # theme_phil()+
         my_caption+
         xlab("First Principal Component")+
         ylab("Second Principal Component")+
-        facet_zoom(xlim = c(4,6),
-                   ylim = c(3,4),
+        geom_point(data =temp,
+                   aes(x=PC1, 
+                       y=PC2),
+                   color = 'blue',
+                   size = 3)+
+        geom_label_repel(data = temp,
+                   aes(x=PC1, 
+                       y=PC2,
+                       label = name),
+                   color = 'blue',
+                   size = 5)+
+        facet_zoom(xlim = c(temp$PC1-1,
+                            temp$PC1+1),
+                   ylim = c(temp$PC2-1,
+                            temp$PC2+1),
                    horizontal=F,
                    zoom.size = 2)+
         theme_bw(16)+
         guides(color = "none",
-               size = "none")+
-        scale_color_manual(values = c("grey60", "blue"))
+               size = "none")
 
 ```
 
@@ -1397,32 +1495,44 @@ dist_2d %>%
 
 As before, the cosine similarity with only two dimensions isn't particularly useful. Here we sort of end up with the opposite problem, where we have a ton of games nearby, some of which feel right, but others not really - is Through the Ages really a comparable game to Castles of Burgundy? I would like to see more of Feld's games showing up here.
 
-
 ```{r two dimension distance measures example castles of burgundy, fig.height=8, fig.width=10,  warning =F}
 
+temp =  pca_rotation %>%
+                           filter(name == 'The Castles of Burgundy')
+        
 pca_rotation %>%
-        mutate(highlight = case_when(name == 'The Castles of Burgundy' ~ 'yes',
-                                     TRUE ~ 'no')) %>%
         ggplot(., aes(x=PC1, 
-                label = name,
-                color = highlight,
+                      label = name,
                 y=PC2))+
-        geom_point(alpha=0.5)+
+        geom_point(alpha=0.25)+
         geom_text(check_overlap = T,
-             size = 4,
+                  alpha = 0.8,
+             size = 3,
             position=position_jitter(width=0.01,height=0.01))+
          # theme_phil()+
         my_caption+
         xlab("First Principal Component")+
         ylab("Second Principal Component")+
-        facet_zoom(xlim = c(0, 2.5),
-                   ylim = c(-2, 0),
+        geom_point(data =temp,
+                   aes(x=PC1, 
+                       y=PC2),
+                   color = 'blue',
+                   size = 3)+
+        geom_label_repel(data = temp,
+                   aes(x=PC1, 
+                       y=PC2,
+                       label = name),
+                   color = 'blue',
+                   size = 5)+
+        facet_zoom(xlim = c(temp$PC1-1,
+                            temp$PC1+1),
+                   ylim = c(temp$PC2-1,
+                            temp$PC2+1),
                    horizontal=F,
                    zoom.size = 2)+
         theme_bw(16)+
         guides(color = "none",
-               size = "none")+
-        scale_color_manual(values = c("grey60", "blue"))
+               size = "none")
 
 ```
 
@@ -1491,46 +1601,37 @@ rm(dist_cosine,
 
 ```
 
-We can look at a few examples to see what results we get, as well as why we get them. Let's use Nemesis as an example. We have a vector for nemesis on the twenty principal components we are looking at. We can make a table of the first ten.
+## Example: Finding Neighbors for **Nemesis**
 
-```{r show nemesis vector}
+We can look at a few examples to see what results we get, as well as why we get them. Let's use Nemesis as an example. We have a vector for Nemesis with its value on each of the twenty principal components we are looking at. We can show this using vector by just plotting its value on a line across each component.
+
+```{r line plot for nemesis, warning=F, message=F}
 
 pca_rotation %>%
-        filter(name == 'Nemesis') %>%
-        select(game_id, name, PC1:PC10) %>%
-        mutate(game_id = as.character(game_id)) %>%
-        mutate_if(is.numeric, round, 2) %>%
-        flextable() %>%
-        flextable::autofit()
-
-```
-
-We could also just plot these values for every component on a line.
-
-```{r line plot for nemesis}
-
-nemesis_plot = pca_rotation %>%
         filter(name == 'Nemesis') %>%
         select(game_id, name, PC1:PC20) %>%
         mutate(game_id = as.character(game_id)) %>%
         gather("component", "loading",-game_id, - name) %>%
+        mutate(component = factor(component,
+                                  levels = paste("PC", seq(1,20), sep=""))) %>%
         ggplot(., aes(x = component,
-                      y = loading,
-                      color = name))+
-        geom_path()+
+                      group = name,
+                      color = name,
+                      y = loading))+
+        geom_point()+
+        geom_line()+
         theme_phil()+
-        coord_cartesian(ylim = c(-15, 15))
-
-nemesis_plot
-
+        coord_cartesian(ylim = c(-15, 15))+
+        theme(axis.text.x = element_text(angle = 45,
+                                         hjust = 1))+
+        xlab("Component")+
+        ylab("Score")+
+        scale_color_colorblind()+
+        theme(legend.position = "right")
 
 ```
 
-
-Finding the distance between games is the same as before, but now we're using more dimensions.
-
-
-What games are the most similar to Nemesis using the three distance metrics? We'll show the top 25 games from each.
+What games are the most similar to Nemesis using the three distance metrics? Finding the distance between games is the same as before, but now we're using more dimensions. We'll show the top 25 games from each.
 
 ```{r get cosine similarity fo rall using all, warning=F, message=F}
 
@@ -1551,6 +1652,7 @@ samp_neighbors = dist_all %>%
         mutate_if(is.numeric, round, 3) %>%
         filter(game !=closest)
         
+# names
 nearest = dist_all %>%
         filter(grepl(samp, name_id)) %>%
         gather('closest','dist',-name_id, -type) %>%
@@ -1562,8 +1664,24 @@ nearest = dist_all %>%
         slice_min(order_by = dist,
                   n = 10,
                   with_ties =F) %>%
-        filter(type == 'euclidean') %>%
+        filter(type == 'manhattan') %>%
         pull(closest)
+
+# nearest ids
+# names
+nearest_ids = dist_all %>%
+        filter(grepl(samp, name_id)) %>%
+        gather('closest','dist',-name_id, -type) %>%
+        mutate(dist = case_when(type == 'cosine' ~ 1-dist,
+                                TRUE ~ dist)) %>%
+        separate(name_id, into = c("game", "game_id"), sep="_") %>%
+        separate(closest, into =c("closest", "closest_id"), sep="_") %>%
+        group_by(type) %>%
+        slice_min(order_by = dist,
+                  n = 10,
+                  with_ties =F) %>%
+        filter(type == 'manhattan') %>%
+        pull(closest_id)
 
 # look
 dist_all %>%
@@ -1590,7 +1708,6 @@ dist_all %>%
 
 As before, we can look at where these games fall in our simple two dimensional map of all games.
 
-
 ```{r place nemesis on background, fig.width=10}
 
 # game
@@ -1603,9 +1720,10 @@ pca_rotation %>%
                 y=PC2))+
         geom_point(alpha=0.4,
                    color = 'grey40')+
-        # geom_text(check_overlap = T,
-        #      size = 3,
-        #     position=position_jitter(width=0.01,height=0.01))+
+        geom_text(check_overlap = T,
+                  vjust=1.8,
+                  alpha=0.5,
+             size = 3)+
         theme_phil()+
         my_caption+
         xlab("First Principal Component")+
@@ -1634,18 +1752,196 @@ background +
         geom_point(data = neighbors_dat,
                    aes(x=PC1, 
                        y=PC2),
-    #               size = 3, 
+                   size = 3, 
                    color ='blue')+
-        geom_text_repel(data  = neighbors_dat,
+        geom_label(data  = neighbors_dat,
                   aes(x=PC1, 
                 label = name,
                 y=PC2),
-     #        size = 3,
-             color = 'blue')
+                vjust = 1.5,
+             size = 3,
+             color = 'blue')+
+        facet_zoom(xlim = c(min(neighbors_dat$PC1)-0.1,
+                            max(neighbors_dat$PC1)+0.1),
+                   ylim = c(min(neighbors_dat$PC2)-0.1,
+                             max(neighbors_dat$PC2)+0.1),
+                   horizontal = F)+
+        theme_bw()
         
 ```
 
-Why do we find these for Nemesis? We can plot each game on the principal components we're looking at.
+Why do we find these games as neighbors for Nemesis? We can plot each game's line on the principal components we're looking at. Each one of these components represents a point of variation that is uncorrelated with the other components. They can be difficult to understand, so I've labelled games at the extreme ends of each component on the graph as a reference point.
+
+```{r line plot for nemesis, fig.height=6, fig.width=10, warning=F, message=F}
+
+profile_df = pca_rotation %>%
+        select(game_id, name, PC1:PC20) %>%
+        melt(., id.vars = c("game_id", "name")) %>%
+        group_by(variable) %>%
+        mutate(scale = scale(value, center=T, scale=T)) %>%
+        ungroup()
+
+# reference ids
+profile_df_references = 
+        bind_rows(
+                profile_df %>%
+                        group_by(variable) %>% 
+                        slice_max(., order_by = value, n=2),
+                profile_df %>%
+                        group_by(variable) %>% 
+                        slice_min(., order_by = value, n=2))
+
+line_plot = profile_df %>%
+        filter(game_id %in% c(nearest_ids)) %>%
+        #     mutate(name = paste(name, game_id, sep="_")) %>%
+        mutate(name = factor(abbreviate(name,
+                                        minlength=30),
+                             levels = abbreviate(nearest,
+                                                 minlength=30))) %>%
+        # mutate(name = factor(abbreviate(name,
+        #                                 minlength=30), 
+        #                      levels = rev(abbreviate(neighbors[1:7],
+        #                                   minlength=30)))) %>%
+        ggplot(., aes(x=variable,
+                      y=value,
+                      color = name,
+                      group = name))+
+        geom_hline(yintercept = 0,
+                   linetype = 'dashed',
+                   color = 'grey60')+
+        geom_line(lwd=1.01)+
+        geom_point()+
+        theme_phil()+
+        coord_cartesian(ylim = c(-15, 15))+
+    #    theme(legend.title = element_text())+
+     #   scale_color_colorblind()+
+        theme(legend.position = "right")+
+        xlab("")+
+        ylab("Component Score")+
+        theme(panel.grid.minor = element_blank())+
+        scale_color_viridis_d(option = "magma",
+                                      begin = 0,
+                                      end = 0.8)+
+        # scale_fill_viridis(option="magma",
+        #                    limits = c(-5,5),
+        #                    oob = scales::squish)+
+        ggtitle(paste("How are games similar to ", nearest[1], "?", sep=""),
+            subtitle = str_wrap("Plotting selected games and its neighbors on each of the twenty principal components. Similar games will have a similar path along each of the components.", 125))
+
+line_plot +
+        geom_point(data = profile_df_references,
+                         aes(x = variable,
+                             y=value),
+                   color = 'grey40',
+                   show.legend = F,
+                   alpha=0.4)+
+        geom_text_repel(data = profile_df_references, 
+                         aes(x = variable,
+                             y=value,
+                             label = abbreviate(name,
+                                                minlength=50)),
+                         color = 'grey40',
+                         show.legend=F,
+                         alpha=0.8,
+                         size = 2)+
+                theme(axis.text.x = element_text(angle = 45,
+                                         hjust = 1))
+        
+```
+
+The basic reason they're considered neighbors? They have similar values and profiles on each of the principal components. By itself, that isn't necessarily helpful in understanding *why* games are similar, given how opaque the principal component scores can be. Let's look at this in further depth by focusing on Nemesis and its neighbors on the first four components.
+
+```{r jitter plots for nd, fig.height=8, fig.width=10, warning=F, message=F}
+
+library(ggforce)
+set.seed(2)
+pos <- position_jitternormal(sd_x = 0.15, sd_y = 0.05)
+pos2 <- position_jitternormal(sd_x = 0.5, sd_y = 0.025)
+
+# get df
+references = bind_rows(
+        pca_rotation %>%
+                select(name, game_id, PC1:PC4) %>%
+                gather("component", "value", -name, -game_id) %>%
+                group_by(component) %>%
+                slice_max(order_by = value, n=2),
+               pca_rotation %>%
+                select(name, game_id, PC1:PC4) %>%
+                gather("component", "value", -name, -game_id) %>%
+                group_by(component) %>%
+                slice_min(order_by = value, n=2)) %>%
+        mutate(component = factor(component, levels = paste("PC", seq(1,20), sep="")))
+
+set.seed(2)
+components_background = pca_rotation %>%
+        select(name, game_id, PC1:PC4) %>%
+        gather("component", "value", -name, -game_id) %>%
+        mutate(component = factor(component, levels = paste("PC", seq(1,20), sep=""))) %>%
+        ggplot(., aes(x=value,
+                      y= component))+
+        geom_jitter(alpha=0.15,
+                    position = pos,
+                   col = 'grey70')+
+        coord_flip()+
+        theme_phil()+
+        geom_jitter(data = references,
+            aes(x=value,
+                y=component),
+            alpha =0.3,
+            color = 'black',
+            position = pos2)+
+        geom_label_repel(data = references,
+            aes(x=value,
+                label = name,
+                y=component),
+            alpha =0.8,
+            color = 'black',
+            position = pos2,
+            size =3)+
+        xlab("Component")+
+        ylab("Score")+
+        geom_hline(yintercept = 0,
+                   linetype = 'dotted')
+
+# display
+display_nearest = pca_rotation %>%
+        filter(name %in% nearest) %>%
+        select(name, game_id, PC1:PC4) %>%
+        mutate(name = factor(name, levels = nearest)) %>%
+        gather("component", "value", -name, -game_id) %>%
+        mutate(component = factor(component, levels = paste("PC",
+                                                            seq(1,20),
+                                                            sep="")))
+set.seed(2)
+components_background +
+        geom_jitter(data = display_nearest,
+                    aes(x=value,
+                        color = name,
+                        y=component),
+                    position = pos2)+
+        geom_label_repel(data = display_nearest,
+                    aes(x=value,
+                        label = name,
+                        color = name,
+                        y=component),
+                    position = pos2,
+                    max.overlaps=8)+
+        guides(label = "none",
+               color = "none",
+               size = "none")+
+scale_color_viridis_d(option="magma",
+                              begin = 0.2,
+                              end = 0.8)+
+        ggtitle(paste("How are games similar to ", nearest[1], "?", sep=""),
+            subtitle = str_wrap("Plotting selected games and its neighbors on the first four principal compnents. Similar games will tend to have similar placements along each of the components.", 125))
+
+```
+
+The first component essentially measures complexity, so games that are higher up tend to be more complex. Nemesis is fairly complex, and most of its neighbors (but not all) tend to be higher up here as well. But the most signifying feature for Nemesis and its neighbors seems to be in the second component. These games are all very high on the storytelling/thematic component, which makes sense given what we know about them. 
+
+The games are middle of the pack on the third component, which is mostly a measure of how economic or wargame focused a game is, but they are all low on the fourth component, which I have found to indicate how social/deceptivea a game is.
+
+We can see how certain components define a game pretty easily by using a tile plot.
 
 ```{r compare Nemsis across pcs}
 
@@ -1657,7 +1953,7 @@ compare = neighbors_dat %>%
                           select(name_id, cosine, euclidean, manhattan)) %>%
         select(name_id, euclidean, cosine, manhattan, PC1:PC20) %>%
         mutate_if(is.numeric, replace_na, 0) %>%
-        arrange(desc(euclidean))
+        arrange(desc(manhattan))
 
 compare %>%
         mutate(name_id = factor(name_id,
@@ -1668,117 +1964,335 @@ compare %>%
                                  levels = paste("PC", seq(1,20), sep=""))) %>%
         ggplot(., aes(x=variable,
                       y=name_id,
-                      fill = value,
-                      color = value))+
+                      fill = value))+
         geom_tile()+
         theme_phil()+
         theme(legend.title = element_text())+
-        scale_color_viridis(option="magma",
-                            limits = c(-5,5),
-                            oob = scales::squish)+
-        scale_fill_viridis(option="magma",
-                           limits = c(-5,5),
-                           oob = scales::squish)+
+        scale_fill_gradient2(low = "red",
+                             mid = "white",
+                             high = "blue",
+                             limits = c(-5, 5),
+                             oob = scales::squish)+
+        # scale_fill_viridis(option="magma",
+        #                    limits = c(-5,5),
+        #                    oob = scales::squish)+
         guides(color = "none",
                fill = guide_colorbar(barheight=0.5,
                                      barwidth=10,
-                                          title = "Negative               Positive",
-                                   #  title = "              Z Score",
+                                     #title = "Low                       High",
                                      title.position = "top"))+
         theme(legend.position = "top")+
         xlab("")+
         ylab("")+
         theme(panel.grid.minor = element_blank(),
               panel.grid.major = element_blank())+
-        theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1))
-
+        theme(axis.text.x= element_text(angle = 45,
+                                         hjust = 1))
         
 ```
 
-```{r fig.width=10}
+## Placing Well Known Games
 
-pos <- position_jitter(width = 0.1, height=0.25, seed = 2)
-pos2 <- position_jitter(width = 0.01, height=0.1, seed = 2)
+The whole purpose of this analysis was to find games that are similar to each other, but with the approach we're taking we can also just place well known games to see how similar/dissimilar they are.
 
-components_background = pca_rotation %>%
-        select(name, game_id, PC1:PC20) %>%
-        gather("component", "value", -name, -game_id) %>%
+Each game is represented by a vector with its score on each of the principal components. These scores come from multiplying each game's record in the dataset by the 'coefficients' from the principal component loadings. We can grab the top 50 ranked games on BGG and plot their profiles on the first 20 principal components using a tile plot, which will help highlight the similarities and differences between them.
+
+```{r show values for PCS for games, fig.height=10}
+
+set.seed(1)
+top_games = pca_rotation %>%
+        arrange(desc(baverage)) %>%
+        head(50)
+
+top_games %>%
+        select(game_id, name, baverage, PC1:PC20) %>%
+        gather("component", "value", -name, -game_id, -baverage) %>%
         mutate(component = factor(component, levels = paste("PC", seq(1,20), sep=""))) %>%
-        ggplot(., aes(x=value,
-                      y= component))+
-        geom_jitter(alpha=0.05,
-                    position = pos,
-                   col = 'grey70')+
-        coord_flip()+
-        theme_phil()
-
-components_background +
-        geom_jitter(data = pca_rotation %>%
-                            filter(name %in% nearest) %>%
-                            select(name, game_id, PC1:PC20) %>%
-                            gather("component", "value", -name, -game_id) %>%
-                            mutate(component = factor(component, levels = paste("PC", seq(1,20), sep=""))),
-                    aes(x=value,
-                        color = name,
-                        y=component),
-                    position = pos2)+
-        geom_label_repel(data = pca_rotation %>%
-                            filter(name %in% nearest) %>%
-                            select(name, game_id, PC1:PC20) %>%
-                            gather("component", "value", -name, -game_id) %>%
-                            mutate(component = factor(component, levels = paste("PC", seq(1,20), sep=""))),
-                    aes(x=value,
-                        label = name,
-                        color = name,
-                        y=component),
-                    position = pos2,
-                    max.overlaps=5)+
-        guides(label = "none",
-               color = "none",
-               size = "none")+
-scale_color_viridis_d(option="magma",
-                              begin = 0.2,
-                              end = 0.8)+
-        coord_flip()
-
-```
-
-
-```{r plot lines, fig.width=10}
-
- pca_rotation %>%
-        select(name, game_id, PC1:PC20) %>%
-        gather("component", "value", -name, -game_id) %>%
-        # mutate(component = gsub("PC", "", component)) %>%
-        # mutate(component = as.numeric(component)) %>%
-        mutate(component = factor(component, levels = paste("PC", seq(1,20), sep=""))) %>%
-        group_by(component) %>%
-        mutate(value = rescale(value, to = c(0,1))) %>%
-        mutate(name_id = paste(name, game_id, sep="_")) %>%
-        filter(name %in% nearest) %>%
-        # filter(game_id %in% (games_train %>%
-        # filter(pub_fantasy_flight_games == 1) %>%
-        # pull(game_id))) %>%
         ggplot(., aes(x=component,
-                      group = name_id,
-                      color = name_id,
-                      by = name_id,
-                      y= value))+
-        geom_line(stat="smooth",
-                  method = "loess", 
-                  size = .9,
-                  span = .3,
-                  alpha = 0.5)+
-        # geom_line(alpha=0.2,
-        #             position = pos)+
+                     y=reorder(name,
+                               baverage),
+                     fill = value))+
+        geom_tile()+
         theme_phil()+
-        guides(color = "none")+
-        scale_color_viridis_d(option="magma",
-                                      begin = 0.2,
-                                      end = 0.8)
-        
-
+        scale_fill_gradient2(low = "red",
+                             mid = "white",
+                             high = "blue",
+                             limits = c(-5, 5),
+                             oob = scales::squish)+
+        # scale_fill_viridis(option="magma",
+        #                    limits = c(-5,5),
+        #                    oob = scales::squish)+
+        guides(color = "none",
+               fill = guide_colorbar(barheight=0.5,
+                                     barwidth=10,
+                                     title = "Low               High",
+                                     title.position = "top"))+
+        ylab("")+
+        xlab("Principal Components")+
+        theme(axis.text.y = element_text(size = 12))+
+        my_caption
 
 ```
 
+One thing that jumps out right away is that the top 50 games on the geek list tend have high values on the first principal component (complexity) - this is because the geek ratings tends to skew towards complex games. We also see a lot of these games are high on the 3rd component (economy) and low on the 6th component (I'm not sure). But with some of these similarities in mind, generally speaking their profiles look to be pretty different if we plot them all side by side.
 
+```{r line plot for top games, warning=F, message=F}
+
+profile_df = pca_rotation %>%
+        select(game_id, name, PC1:PC20) %>%
+        melt(., id.vars = c("game_id", "name")) %>%
+        group_by(variable) %>%
+        mutate(scale = scale(value, center=T, scale=T)) %>%
+        ungroup()
+
+# reference ids
+profile_df_references = 
+        bind_rows(
+                profile_df %>%
+                        group_by(variable) %>% 
+                        slice_max(., order_by = value, n=2),
+                profile_df %>%
+                        group_by(variable) %>% 
+                        slice_min(., order_by = value, n=2))
+
+line_plot = profile_df %>%
+        filter(game_id %in% (top_games %>% pull(game_id))) %>%
+        #     mutate(name = paste(name, game_id, sep="_")) %>%
+        mutate(name = factor(abbreviate(name,
+                                        minlength=30),
+                             levels = abbreviate(top_games %>% pull(name),
+                                                 minlength=30))) %>%
+        # mutate(name = factor(abbreviate(name,
+        #                                 minlength=30), 
+        #                      levels = rev(abbreviate(neighbors[1:7],
+        #                                   minlength=30)))) %>%
+        ggplot(., aes(x=variable,
+                      y=value,
+                      color = name,
+                      group = name))+
+        geom_hline(yintercept = 0,
+                   linetype = 'dashed',
+                   color = 'grey60')+
+        geom_line(lwd=1.01)+
+        geom_point()+
+        theme_phil()+
+        coord_cartesian(ylim = c(-15, 15))+
+    #    theme(legend.title = element_text())+
+     #   scale_color_colorblind()+
+        theme(legend.position = "right")+
+        xlab("")+
+        ylab("Component Score")+
+        theme(panel.grid.minor = element_blank())+
+        scale_color_viridis_d(option = "magma",
+                                      begin = 0,
+                                      end = 0.8)+
+        guides(color = "none")
+        # # scale_fill_viridis(option="magma",
+        # #                    limits = c(-5,5),
+        # #                    oob = scales::squish)+
+        # ggtitle(paste("How are games similar to ", nearest[1], "?", sep=""),
+        #     subtitle = str_wrap("Plotting selected games and its neighbors on each of the twenty principal components. Similar games will have a similar path along each of the components.", 125))
+
+line_plot +
+        geom_point(data = profile_df_references,
+                         aes(x = variable,
+                             y=value),
+                   color = 'grey40',
+                   show.legend = F,
+                   alpha=0.4)+
+        geom_text_repel(data = profile_df_references, 
+                         aes(x = variable,
+                             y=value,
+                             label = abbreviate(name,
+                                                minlength=50)),
+                         color = 'grey40',
+                         show.legend=F,
+                         alpha=0.8,
+                         size = 2)+
+                theme(axis.text.x = element_text(angle = 45,
+                                         hjust = 1))
+
+```
+
+Let's take Twilight Imperium and plot its values on the principal components.
+
+```{r ti4 line plot, warning=F, message=F}
+
+samp_id = active_games %>% 
+        filter(name == 'Twilight Imperium: Fourth Edition') %>%
+                    #   name == 'Carcassonne') %>%
+        pull(game_id)
+
+game_line_plot = profile_df %>%
+        filter(game_id %in% samp_id) %>%
+        #     mutate(name = paste(name, game_id, sep="_")) %>%
+        # mutate(name = factor(abbreviate(name,
+        #                                 minlength=30), 
+        #                      levels = rev(abbreviate(neighbors[1:7],
+        #                                   minlength=30)))) %>%
+        ggplot(., aes(x = variable,
+                      group = name,
+                      color = name,
+                      y = value))+
+        geom_hline(yintercept = 0,
+                   linetype = 'dashed',
+                   color = 'grey60')+
+        geom_line(lwd=1.01)+
+        geom_point()+
+        theme_phil()+
+        coord_cartesian(ylim = c(-15, 15))+
+    #    theme(legend.title = element_text())+
+     #   scale_color_colorblind()+
+        theme(legend.position = "right")+
+        xlab("")+
+        ylab("Component Score")+
+        theme(panel.grid.minor = element_blank())+
+        scale_color_colorblind()
+        # scale_color_viridis_d(option = "magma",
+        #                               begin = 0,
+        #                               end = 0.8)+
+
+game_line_plot +
+        geom_point(data = profile_df_references,
+                         aes(x = variable,
+                             y=value),
+                   color = 'grey40',
+                   show.legend = F,
+                   alpha=0.4)+
+        geom_text_repel(data = profile_df_references, 
+                         aes(x = variable,
+                             y=value,
+                             label = abbreviate(name,
+                                                minlength=50)),
+                         color = 'grey40',
+                         show.legend=F,
+                         alpha=0.8,
+                         size = 2)+
+                theme(axis.text.x = element_text(angle = 45,
+                                         hjust = 1))+
+        theme(legend.position = "top")+
+        theme(panel.grid.major.y = element_blank())
+
+```
+
+Find the game that is least like Twilight Imperium
+
+```{r find dissimillar games, warning=F, message=F}
+
+samp_id = active_games %>% 
+        filter(name == 'Twilight Imperium: Fourth Edition') %>%
+                    #   name == 'Carcassonne') %>%
+        pull(game_id)
+
+distant = dist_all %>%
+        filter(grepl(samp_id, name_id)) %>%
+        gather('closest','dist',-name_id, -type) %>%
+        mutate(dist = case_when(type == 'cosine' ~ 1-dist,
+                                TRUE ~ dist)) %>%
+        separate(name_id, into = c("game", "game_id"), sep="_") %>%
+        separate(closest, into =c("closest", "closest_id"), sep="_") %>%
+        group_by(type) %>%
+        slice_max(order_by = dist,
+                  n = 10,
+                  with_ties =F) %>%
+        filter(type == 'manhattan') %>%
+        head(1) %>%
+        pull(closest_id)
+
+compare = c(samp_id, distant)
+
+game_line_plot = profile_df %>%
+        filter(game_id %in% compare) %>%
+        #     mutate(name = paste(name, game_id, sep="_")) %>%
+        # mutate(name = factor(abbreviate(name,
+        #                                 minlength=30), 
+        #                      levels = rev(abbreviate(neighbors[1:7],
+        #                                   minlength=30)))) %>%
+        ggplot(., aes(x = variable,
+                      group = name,
+                      color = name,
+                      y = value))+
+        geom_hline(yintercept = 0,
+                   linetype = 'dashed',
+                   color = 'grey60')+
+        geom_line(lwd=1.01)+
+        geom_point()+
+        theme_phil()+
+        coord_cartesian(ylim = c(-15, 15))+
+    #    theme(legend.title = element_text())+
+     #   scale_color_colorblind()+
+        theme(legend.position = "right")+
+        xlab("")+
+        ylab("Component Score")+
+        theme(panel.grid.minor = element_blank())+
+        scale_color_colorblind()+
+        theme(axis.text.x = element_text(angle = 45,
+                                         hjust = 1))+
+        theme(legend.position = 'top')
+
+game_line_plot
+
+```
+
+```{r comapre two games, warning=F, message=F}
+
+samp_id = active_games %>% 
+        filter(name == 'War of the Ring: Second Edition' |
+               name == 'Kingdomino') %>%
+        pull(game_id)
+
+game_line_plot = profile_df %>%
+        filter(game_id %in% samp_id) %>%
+        #     mutate(name = paste(name, game_id, sep="_")) %>%
+        # mutate(name = factor(abbreviate(name,
+        #                                 minlength=30), 
+        #                      levels = rev(abbreviate(neighbors[1:7],
+        #                                   minlength=30)))) %>%
+        ggplot(., aes(x = variable,
+                      group = name,
+                      color = name,
+                      y = value))+
+        geom_hline(yintercept = 0,
+                   linetype = 'dashed',
+                   color = 'grey60')+
+        geom_line(lwd=1.01)+
+        geom_point()+
+        theme_phil()+
+        coord_cartesian(ylim = c(-15, 15))+
+    #    theme(legend.title = element_text())+
+     #   scale_color_colorblind()+
+        theme(legend.position = "right")+
+        xlab("")+
+        ylab("Component Score")+
+        theme(panel.grid.minor = element_blank())+
+        scale_color_colorblind()
+        # scale_color_viridis_d(option = "magma",
+        #                               begin = 0,
+        #                               end = 0.8)+
+
+game_line_plot +
+        geom_point(data = profile_df_references,
+                         aes(x = variable,
+                             y=value),
+                   color = 'grey40',
+                   show.legend = F,
+                   alpha=0.4)+
+        geom_text_repel(data = profile_df_references, 
+                         aes(x = variable,
+                             y=value,
+                             label = abbreviate(name,
+                                                minlength=50)),
+                         color = 'grey40',
+                         show.legend=F,
+                         alpha=0.8,
+                         size = 2)+
+                theme(axis.text.x = element_text(angle = 45,
+                                         hjust = 1))+
+        theme(legend.position = "top")+
+        theme(panel.grid.major.y = element_blank())
+
+```
+
+## Placing Dissimilar Games
+
+So, we've looked at one game and its most similar neighbors, and we got mostly similar results regardless of the distance metric.
