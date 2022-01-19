@@ -599,7 +599,7 @@ plot_df = df %>%
 library(ggforce)
 set.seed(2)
 pos <- position_jitternormal(sd_x = 0.075, sd_y = 0.025)
-pos2 <- position_jitternormal(sd_x = 0.025, sd_y = 0.025)
+pos2 <- position_jitternormal(sd_x = 0.05, sd_y = 0.025)
 
 # make background plot
 set.seed(2)
@@ -618,7 +618,7 @@ background = plot_df %>%
         theme(panel.grid.major = element_blank(),
               panel.grid.minor = element_blank())+
         ggtitle(paste("Which games are similar to ", game, "?", sep= ""),
-                subtitle = str_wrap("Placing games on first five principal components of variation, which generally correspond complexity, theme, economy, and coooperation.", 125))+
+                subtitle = str_wrap("Placing games on first four principal components of variation, which generally correspond complexity, theme, economy, and coooperation.", 125))+
         theme(panel.grid.major = element_blank(),
               panel.grid.minor = element_blank())+
         geom_vline(xintercept = 0,
@@ -947,7 +947,6 @@ line_plot +
                              y=value),
                    color = 'grey40',
                    show.legend = F,
-                   position = pos2,
                    alpha=0.4)+
         geom_text_repel(data = profile_df_references, 
                          aes(x = variable,
@@ -955,7 +954,6 @@ line_plot +
                              label = abbreviate(name,
                                                 minlength=50)),
                          color = 'grey40',
-                         position = pos2,
                          show.legend=F,
                          alpha=0.4,
                          size = 2)+
