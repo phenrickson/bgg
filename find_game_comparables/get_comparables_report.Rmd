@@ -599,7 +599,7 @@ plot_df = df %>%
 library(ggforce)
 set.seed(2)
 pos <- position_jitternormal(sd_x = 0.075, sd_y = 0.025)
-pos2 <- position_jitternormal(sd_x = 0.05, sd_y = 0.025)
+pos2 <- position_jitternormal(sd_x = 0.025, sd_y = 0.025)
 
 # make background plot
 set.seed(2)
@@ -831,7 +831,7 @@ background +
         #             color = "black",
         #             size = 2.5,
         #             position = pos2)+
-        geom_jitter(data = plot_df_neighbors,
+        geom_point(data = plot_df_neighbors,
                     aes(x = variable,
                         color = name,
                         y = value),
@@ -879,7 +879,7 @@ background +
                          # y=c(-14, 12),
                          # label = c("Cards", "Trains/Networks"))+
         xlab("")+
-        ylab("Component Loading")
+        ylab("Value")
 
 ```
 

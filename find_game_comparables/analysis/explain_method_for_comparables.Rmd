@@ -1772,7 +1772,7 @@ background +
 
 Why do we find these games as neighbors for Nemesis? We can plot each game's line on the principal components we're looking at. Each one of these components represents a point of variation that is uncorrelated with the other components. They can be difficult to understand, so I've labelled games at the extreme ends of each component on the graph as a reference point.
 
-```{r line plot for nemesis, fig.height=6, fig.width=10, warning=F, message=F}
+```{r line plot for nemesi with labelss, fig.height=6, fig.width=10, warning=F, message=F}
 
 profile_df = pca_rotation %>%
         select(game_id, name, PC1:PC20) %>%
@@ -2292,7 +2292,3 @@ game_line_plot +
         theme(panel.grid.major.y = element_blank())
 
 ```
-
-## Placing Dissimilar Games
-
-So, we've looked at one game and its most similar neighbors, and we got mostly similar results regardless of the distance metric.
