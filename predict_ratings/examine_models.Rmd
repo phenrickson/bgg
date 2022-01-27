@@ -204,6 +204,57 @@ preds = bake_and_predict_ratings(ids,
 
 ```
 
+Plot of predicted vs current
+
+```{r plot 2021, warning=F, message=F, fig.width=10, fig.height=10}
+
+# get estimates
+estimated = preds$estimate %>%
+        mutate(type = 'est') %>%
+        select(yearpublished, game_id, name, type, outcome, pred) %>%
+        rename(value = pred) %>%
+        as_tibble()
+
+# get current
+current = bgg_today %>%
+        filter(game_release_year %in% unique(preds$estimate$yearpublished)) %>%
+        select(game_id, game_name, game_release_year, bgg_average, bayes_average, users_rated) %>%
+        rename(name = game_name,
+               average = bgg_average,
+               baverage = bayes_average,
+               yearpublished = game_release_year,
+               usersrated = users_rated) %>%
+        melt(., id.vars = c("game_id", "name", "yearpublished")) %>%
+        rename(outcome = variable) %>%
+        mutate(type = "actual") %>%
+        select(yearpublished, game_id, name, type, outcome, value) %>%
+        as_tibble() 
+        
+# bind with current
+bind_rows(estimated, current) %>%
+               pivot_wider(names_from = c("type"),
+                    values_from = c("value")) %>%
+        filter(outcome == 'baverage' | 
+                       outcome =='average') %>%
+        ggplot(., aes(x=est,
+                      label = name,
+                      y=actual))+
+        geom_point(alpha = 0.25)+
+        facet_wrap(yearpublished~outcome,
+                   ncol = 1,
+                   scales = "free")+
+        theme_bw(16)+
+        geom_abline(slope = 1,
+                    intercept = 0)+
+        geom_text(check_overlap=T,
+                  size = 2,
+                  vjust = -1
+                  )+
+        xlab("Estimated")+
+        ylab("Current")
+```
+
+
 ```{r use function for table for 2020, warning=F, message=F}
 
 display_preds(preds,
@@ -228,6 +279,57 @@ preds = bake_and_predict_ratings(ids,
 
 ```
 
+Plot of predicted vs current.
+
+```{r plot 2021, warning=F, message=F, eval=F, fig.width=10, eval=F, fig.height=10}
+
+# get estimates
+estimated = preds$estimate %>%
+        mutate(type = 'est') %>%
+        select(yearpublished, game_id, name, type, outcome, pred) %>%
+        rename(value = pred) %>%
+        as_tibble()
+
+# get current
+current = bgg_today %>%
+        filter(game_release_year %in% unique(preds$estimate$yearpublished)) %>%
+        select(game_id, game_name, game_release_year, bgg_average, bayes_average, users_rated) %>%
+        rename(name = game_name,
+               average = bgg_average,
+               baverage = bayes_average,
+               yearpublished = game_release_year,
+               usersrated = users_rated) %>%
+        melt(., id.vars = c("game_id", "name", "yearpublished")) %>%
+        rename(outcome = variable) %>%
+        mutate(type = "actual") %>%
+        select(yearpublished, game_id, name, type, outcome, value) %>%
+        as_tibble() 
+        
+# bind with current
+bind_rows(estimated, current) %>%
+               pivot_wider(names_from = c("type"),
+                    values_from = c("value")) %>%
+        filter(outcome == 'baverage' | 
+                       outcome =='average') %>%
+        ggplot(., aes(x=est,
+                      label = name,
+                      y=actual))+
+        geom_point(alpha = 0.25)+
+        facet_wrap(yearpublished~outcome,
+                   ncol = 1,
+                   scales = "free")+
+        theme_bw(16)+
+        geom_abline(slope = 1,
+                    intercept = 0)+
+        geom_text(check_overlap=T,
+                  size = 2,
+                  vjust = -1
+                  )+
+        xlab("Estimated")+
+        ylab("Current")
+```
+
+In table form.
 
 ```{r use function for table for 2021, warning=F, message=F}
 
@@ -254,6 +356,59 @@ preds = bake_and_predict_ratings(ids,
 
 ```
 
+
+```{r plot 2021, warning=F, message=F, fig.width=10, fig.height=10}
+
+# get estimates
+estimated = preds$estimate %>%
+        mutate(type = 'est') %>%
+        select(yearpublished, game_id, name, type, outcome, pred) %>%
+        rename(value = pred) %>%
+        as_tibble()
+
+# get current
+current = bgg_today %>%
+        filter(game_release_year %in% unique(preds$estimate$yearpublished)) %>%
+        select(game_id, game_name, game_release_year, bgg_average, bayes_average, users_rated) %>%
+        rename(name = game_name,
+               average = bgg_average,
+               baverage = bayes_average,
+               yearpublished = game_release_year,
+               usersrated = users_rated) %>%
+        melt(., id.vars = c("game_id", "name", "yearpublished")) %>%
+        rename(outcome = variable) %>%
+        mutate(type = "actual") %>%
+        select(yearpublished, game_id, name, type, outcome, value) %>%
+        as_tibble() 
+        
+# bind with current
+bind_rows(estimated, current) %>%
+               pivot_wider(names_from = c("type"),
+                    values_from = c("value")) %>%
+        filter(outcome == 'baverage' | 
+                       outcome =='average') %>%
+        ggplot(., aes(x=est,
+                      label = name,
+                      y=actual))+
+        geom_point(alpha = 0.25)+
+        facet_wrap(yearpublished~outcome,
+                   ncol = 1,
+                   scales = "free")+
+        theme_bw(16)+
+        geom_abline(slope = 1,
+                    intercept = 0)+
+        geom_text(check_overlap=T,
+                  size = 2,
+                  vjust = -1
+                  )+
+        xlab("Estimated")+
+        ylab("Current")
+
+rm(current, estimated, combined)
+```
+
+
+Table of predictions
 
 ```{r use function for table for 2022, warning=F, message=F}
 

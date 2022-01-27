@@ -18,36 +18,6 @@ function(id,
                 
                 source(here::here("functions/get_game_record.R"))
                 
-                # # get training set
-                # all_files = list.files(here::here("deployment"))
-                # files = all_files[grepl("games|oos|recipe|preds|models", all_files)]
-                # 
-                # # # get dataset
-                # most_recent_games = all_files[grepl("games_datasets_avgweight", all_files)] %>%
-                #         as_tibble() %>%
-                #         separate(value, c("name1", "name2", "name3", "date", "file"), sep = "([._])",
-                #                  extra = "merge",
-                #                  fill = "left") %>%
-                #         unite(name, name1:name2) %>%
-                #         mutate(date = as.Date(date)) %>%
-                #         filter(date == max(date)) %>%
-                #         unite(path, name:file) %>%
-                #         mutate(path = gsub("_Rdata", ".Rdata", path)) %>%
-                #         pull(path)
-                # 
-                # # get most recent recipe
-                # most_recent_recipe = all_files[grepl("recipe_avgweight", all_files)] %>%
-                #         as_tibble() %>%
-                #         separate(value, c("name1", "name2", "name3", "date", "file"), sep = "([._])",
-                #                  extra = "merge",
-                #                  fill = "left") %>%
-                #         unite(name, name1:name3) %>%
-                #         mutate(date = as.Date(date)) %>%
-                #         filter(date == max(date)) %>%
-                #         unite(path, name:file) %>%
-                #         mutate(path = gsub("_Rds", ".Rds", path)) %>%
-                #         pull(path) 
-                
                 # use function to get record from bgg
                 suppressMessages({
                         raw_record = get_game_record(id) %>%
@@ -124,42 +94,6 @@ function(id,
                    models_complexity,
                    baked_record, 
                    req)
-                
-                # ##### now push into models trained for baverage and average #####
-                # 
-                # # get training set
-                # most_recent_games = all_files[grepl("games_datasets_ratings", all_files)] %>%
-                #         as_tibble() %>%
-                #         separate(value, c("name1", "name2","name3", "date", "file"), sep = "([._])",
-                #                  extra = "merge",
-                #                  fill = "left") %>%
-                #         unite(name, name1:name2) %>%
-                #         mutate(date = as.Date(date)) %>%
-                #         filter(dteate == max(date)) %>%
-                #         unite(path, name:file) %>%
-                #         mutate(path = gsub("_Rdata", ".Rdata", path)) %>%
-                #         pull(path)
-                # 
-                # # get most recent recipe
-                # most_recent_recipe = all_files[grepl("recipe_ratings", all_files)] %>%
-                #         as_tibble() %>%
-                #         separate(value, c("name1", "name2", "name3", "date", "file"), sep = "([._])",
-                #                  extra = "merge",
-                #                  fill = "left") %>%
-                #         unite(name, name1:name3) %>%
-                #         mutate(date = as.Date(date)) %>%
-                #         filter(date == max(date)) %>%
-                #         unite(path, name:file) %>%
-                #         mutate(path = gsub("_Rds", ".Rds", path)) %>%
-                #         pull(path)
-                # 
-                # # use function to get record from bgg
-                # # then put in the estimated weight
-                # suppressMessages({
-                #         raw_record = get_game_record(id) %>%
-                #                 mutate(number_designers = rowSums(across(starts_with("des_")))) %>%
-                #                 mutate(avgweight = estimated_weight$pred) # adding in estimated weight
-                # })
                 
                 # update the weight variable in the raw record
                 raw_record$avgweight = estimated_weight$pred
