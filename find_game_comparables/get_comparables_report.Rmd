@@ -7,7 +7,7 @@ output:
         toc: true
         toc_depth: 3
 params:
-  id: 54998
+  id: 105551
 ---
 
 ```{r global settings, echo=F, warning=F, message=F, results = 'hide'}
@@ -837,7 +837,7 @@ background +
                         y = value),
                     size = 2,
                     position = pos2)+
-        geom_label_repel(data = plot_df_neighbors,         
+        geom_text_repel(data = plot_df_neighbors,         
                          aes(x = variable,
                              color = name,
                              y=value,
