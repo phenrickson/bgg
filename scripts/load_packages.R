@@ -73,6 +73,8 @@ library(magrittr)
 library(tidymodels)
 library(rsample)
 library(workflows)
+library(ggforce)
+library(flextable)
 
 require(prettydoc)
 require(rmdformats)
@@ -143,6 +145,8 @@ require(magrittr)
 require(tidymodels)
 require(workflows)
 require(rsample)
+require(ggforce)
+require(flextable)
 
 cat("setting conflict preferences.\n")
 

@@ -20,195 +20,8 @@ bgg_ids = bgg_today %>%
 # # push through API
 # samp_id = bgg_ids[1:100]
 
-# create function to pull XML for games, then make tables out of selected output
-get_bgg_api_data= function(input_game_id) {
-        
-        # push through api
-        url = GET(paste('https://www.boardgamegeek.com/xmlapi2/thing?id=', paste(input_game_id, collapse=","), '&stats=1', sep=""))
-       
-         # get url
-        doc = xml2::read_xml(url)
-        
-        # parse
-        parsed = xmlInternalTreeParse(doc, useInternalNodes = T)
-        
-        # get thumbnails
-        info_parser = function(var) {
-                
-                foreach(i = 1:length(input_game_id), .combine = bind_rows) %do% {
-                        getNodeSet(parsed, "//item")[[i]][paste(var)] %>%
-                                lapply(., xmlToList) %>%
-                                do.call(rbind, .) %>% 
-                                as_tibble() %>%
-                                mutate(game_id = input_game_id[i]) %>% 
-                                select(game_id, everything())
-                }
-                
-        }
-        
-        ### get specific output
-        game_names = info_parser(var = 'name')
-        
-        # thumbnails
-        game_thumbnails = info_parser(var = 'thumbnail') %>%
-                set_names(., c("game_id", "thumbnail"))
-        
-        # description
-        game_description = info_parser(var = 'description') %>%
-                set_names(., c("game_id", "description"))
-        
-        # image
-        game_image = info_parser(var = 'image') %>%
-                set_names(., c("game_id", "image"))
-        
-        # categories, mechanics, etc
-        game_categories= suppressWarnings(
-                info_parser(var = 'link') %>%
-                        select(game_id, type, id, value)
-        )
-        
-        ## summary info
-        # summary of game
-        summary_parser = function(var) {
-                foreach(i = 1:length(input_game_id), .combine = bind_rows) %do% {
-                        getNodeSet(parsed, "//item")[[i]][paste(var)] %>%
-                                lapply(., xmlToList) %>%
-                                do.call(rbind, .) %>% 
-                                as_tibble() %>%
-                                mutate(game_id = input_game_id[i]) %>% 
-                                mutate(type = paste(var)) %>%
-                                select(game_id, everything()) %>%
-                                select(game_id, type, value)
-                }
-                
-        }
-        
-        # selected summary info
-        summary = c("yearpublished",
-                  "minage",
-                  "minplayers",
-                  "maxplayers",
-                  "playingtime",
-                  "minplaytime",
-                  "maxplaytime")
-        
-        # get game summary
-        game_summary = foreach(h = 1:length(summary),
-                             .combine = bind_rows) %do% {
-                                     summary_parser(var = summary[h])
-                             }
-        
-        # statistics
-        stats = c("usersrated",
-                "average",
-                "bayesaverage",
-                "stddev",
-                "owned",
-                "trading",
-                "wanting",
-                "wishing",
-                "numcomments")
-        
-        # function
-        stats_parser = function(var) {
-                foreach(i = 1:length(input_game_id), .combine = bind_rows) %do% {
-                        
-                        getNodeSet(parsed, "//ratings")[[i]][paste(var)] %>%
-                                lapply(., xmlToList) %>%
-                                do.call(rbind, .) %>%
-                                as_tibble() %>%
-                                mutate(game_id = input_game_id[i]) %>%
-                                mutate(type = paste(var)) %>%
-                                select(game_id, everything()) %>%
-                                select(game_id, type, value)
-                }
-        }
-        
-        # get stats
-        game_stats = foreach(h=1:length(stats), .combine = bind_rows) %do% {
-                stats_parser(var = stats[h])
-        }
-        
-        # get ranks
-        # function
-        ranks_parser = function(var) {
-                foreach(i = 1:length(input_game_id), .combine = bind_rows) %do% {
-                        
-                        getNodeSet(parsed, "//ranks")[[i]][paste(var)] %>%
-                                lapply(., xmlToList) %>%
-                                do.call(rbind, .) %>%
-                                as_tibble() %>%
-                                mutate(game_id = input_game_id[i]) %>%
-                                mutate(type = paste(var)) %>%
-                                select(game_id, everything())
-                }
-        }
-        
-        # get ranks
-        game_ranks = ranks_parser('rank')
-        
-        ## playercounts and poll
-        poll_parser = function(var) {
-                foreach(i = 1:length(input_game_id), .combine = bind_rows) %do% {
-                        
-                        poll = getNodeSet(parsed, "//item")[[i]]['poll'][[1]] # getting firste lement from the poll
-                        results = getNodeSet(poll, 'results')  %>%
-                                map(., xmlToList)
-                        
-                        # player counts with votes
-                        numplayers = results %>% 
-                                map(., ".attrs") %>% 
-                                do.call(rbind, .) %>% 
-                                as_tibble() %>% 
-                                pull() %>%
-                                rep(each = 3) %>%
-                                as_tibble() %>%
-                                rename(numplayers = value)
-                        
-                        # the votes
-                        votes = results %>% map(., as.data.frame) %>% 
-                                map(., t) %>%
-                                do.call(rbind, .) %>% 
-                                as_tibble() %>%
-                                filter(value %in% c("Best", "Recommended", "Not Recommended"))
-                        
-                        # combine and out
-                        out = bind_cols(
-                                numplayers,
-                                votes) %>%
-                                mutate(game_id = input_game_id[i]) %>% 
-                                select(game_id, numplayers, value, numvotes)
-                        
-                        out
-                }
-        }
-        
-        # votes for each games
-        game_playercounts = poll_parser(input_game_id)
-        
-        
-        ## pivot some of this for output
-        game_features = game_summary %>%
-                spread(type, value) %>%
-                left_join(., 
-                          game_stats %>%
-                                  spread(type, value),
-                          by = c("game_id"))
-        
-        # combine output
-        output = list("timestamp" = Sys.time(),
-                      "game_description" = game_description,
-                      "game_names" = game_names,
-                      "game_thumbnails" = game_thumbnails,
-                      "game_image" = game_image,
-                      "game_features" = game_features,
-                      "game_playercounts" = game_playercounts,
-                      "game_categories" = game_categories,
-                      "game_ranks" = game_ranks)
-        
-        return(output)
-        
-}
+# get previously saved function for getting bgg data from api
+source(here::here("functions/get_bgg_data_from_api.R"))
         
 # create batches of n size
 n = 400
@@ -240,8 +53,8 @@ print(paste("saving to local"))
 readr::write_rds(batches_returned,
                  file = here::here(paste("raw/batches_returned_", Sys.Date(), ".Rdata", sep="")))
 
-# convert to tabular form
-## extract tables
+beepr::beep(3)
+# extract tables
 print(paste("creating tables"))
 
 # categories
@@ -277,7 +90,7 @@ game_images =  map(batches_returned, "game_image") %>%
                           rbindlist(.) %>%
                           as_tibble(),
                   by = c("game_id"),
-                  )
+        )
 
 # features
 game_features = map(batches_returned, "game_features") %>%
@@ -286,6 +99,7 @@ game_features = map(batches_returned, "game_features") %>%
         type_convert() %>%
         select(game_id,
                yearpublished,
+               averageweight,
                average,
                bayesaverage,
                usersrated,
@@ -297,11 +111,12 @@ game_features = map(batches_returned, "game_features") %>%
                minplaytime,
                maxplaytime,
                numcomments,
+               numweights,
                owned,
                trading,
                wanting,
                wishing
-               )
+        )
 
 # ranks
 game_ranks = map(batches_returned, "game_ranks") %>%
@@ -325,7 +140,7 @@ game_ranks = map(batches_returned, "game_ranks") %>%
                     names_from = c("name"),
                     names_prefix = c("rank_"),
                     values_from = c("rank"))
-         
+
 ## Combine           
 # combine features and ranks
 game_info = game_features %>%

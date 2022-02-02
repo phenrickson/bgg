@@ -1,0 +1,631 @@
+---
+title: "Dealing with BGG's Categorical Features"
+author: Phil Henrickson
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+        toc: true
+        toc_depth: 2
+        number_sections: true
+params:
+  end_training_year: 2019
+  min_ratings: 200
+---
+
+```{r global settings, echo=F, warning=F, message=F, results='hide'}
+
+knitr::opts_chunk$set(echo = F,
+                      error=F,
+                      dev="png",
+                      fig.width = 10,
+                      fig.height = 6)
+
+options(knitr.duplicate.label = "allow")
+
+options(scipen=999)
+
+source(here::here("scripts/load_packages.R"))
+source(here::here("functions/theme_phil.R"))
+
+```
+
+```{r flextable settings, echo=F, warning=F, message=F, results='hide'}
+
+#library(webshot2)
+#library(flextable)
+set_flextable_defaults(theme_fun = theme_alafoli,
+                       font.color = "grey10",
+  padding.bottom = 6, 
+  padding.top = 6,
+  padding.left = 6,
+  padding.right = 6,
+  background.color = "white")
+
+```
+
+```{r connect to big query, warning=F, message=F, results='hide'}
+
+library(bigrquery)
+
+# get project credentials
+PROJECT_ID <- "gcp-analytics-326219"
+BUCKET_NAME <- "test-bucket"
+
+# authorize
+bq_auth(email = "phil.henrickson@aebs.com")
+
+# establish connection
+bigquerycon<-dbConnect(
+        bigrquery::bigquery(),
+        project = PROJECT_ID,
+        dataset = "bgg"
+)
+
+# query table of game info
+active_games<-DBI::dbGetQuery(bigquerycon, 
+                              'SELECT * FROM bgg.api_game_info')
+
+# create caption for plots
+my_caption = list(labs(caption = paste(paste("Data from boardgamegeek.com as of", max(as.Date(active_games$timestamp))),
+                        paste("Data and analysis at github.com/phenrickson/bgg"), sep="\n")))
+
+```
+
+```{r other tables to query as well}
+
+game_types= DBI::dbGetQuery(bigquerycon, 
+                              'SELECT * FROM bgg.api_game_categories')
+
+```
+
+```{r pivot categories}
+
+# function for pivoting and making dummy variables
+pivot_and_dummy_types = function(input_data, input_type) {
+        
+        # pivoting
+        input_data %>%
+                filter(type == input_type) %>%
+                mutate(type_abbrev = substr(type, 1, 3)) %>%
+                mutate(value = tolower(gsub("[[:space:]]", "_", gsub("\\s+", " ", gsub("[[:punct:]]","", value))))) %>%
+                select(game_id, type, value) %>%
+                mutate(type = paste(type, value, sep="_")) %>%
+                mutate(has_type = 1) %>%
+                select(-value) %>%
+                pivot_wider(names_from = c("type"),
+                            values_from = c("has_type"),
+                            id_cols = c("game_id"),
+                            names_sep = "_",
+                            values_fn = min,
+                            values_fill = 0)
+        
+}
+
+# categories
+game_categories = pivot_and_dummy_types(game_types,
+                                  "category")
+
+# family
+game_families= pivot_and_dummy_types(game_types,
+                                  "family")
+        
+# mechanics
+game_mechanics = pivot_and_dummy_types(game_types,
+                                  "mechanic")
+
+# designers
+game_designers = pivot_and_dummy_types(game_types,
+                                  "designer")
+
+# publishers
+game_publishers = pivot_and_dummy_types(game_types,
+                                  "publisher")
+
+# artists
+game_artists = pivot_and_dummy_types(game_types,
+                                  "artist")
+
+# implementation
+game_implementation = pivot_and_dummy_types(game_types,
+                                  "implementation")
+
+```
+
+# Selecting Categorical Features
+
+It turns out that BGG collects lots of different features about games. In addition to knowings things like playing time, player counts, we also have categorical information on a game's designers, artists, publishers, "families", categories, implementations... If we look at the total number of categorical variables from BGG that we could look at for a game, we could end up with over 30k dummy variables.
+
+```{r show number of different variables for each type}
+
+game_types %>%
+        filter(type != 'expansion') %>%
+        group_by(type) %>%
+        summarize(n = n_distinct(id)) %>%
+        arrange(desc(n)) %>%
+        flextable() %>%
+        autofit()
+
+```
+
+
+
+This is good in the sense that we have ample information about games for models to look at and use in training, but bad in the sense that if we threw all of it into a model we would quickly run into the curse of dimensionality. What information should we use in our models to predict BGG ratings? Our goal is to use features that would only be known when a game is initially released, so that we can predict upcoming games.
+
+In a perfect world, we would view this as a P > N problem and let the data speak for itself via methods of feature selection and dimension reduction. However, we have to be careful in what features we allow to enter a model, as some of the categories about games are themselves a reflection of the outcomes we want to predict. So we'll do a bit of inspection in this script to figure out which features of games we'll allow to enter our training recipe, in essence using a manual filtering method to select features. 
+
+I'm going to inspect the full dataset rather than do a train/test split up front. This is basically due to the structure of the dataset and the fact that I'm lacking a true historical dataset of 'what exactly did we know on day X'.
+
+## Families
+
+One set of features relates to a game's "family", which is sort of a catch all term for various buckets that games might fall into: Kickstarters, dungeon crawls, tableau builders, etc. Some of these are likely to be very useful in training a model, while others should be omitted. We don't, for instance, want to include whether a game has digital implementations, as these are a reflection of a game's popularity. These sets of features also have a very long tail, with some families only having one or two games in them. We'll filter to remove families with near zero variance, removing features on this variable that apply to a little less than 1% of games.
+
+```{r examine average and baverage by family, warning=F, message=F, fig.height=8, fig.width=10}
+
+# set a minimum percentage
+minimum_prop = 0.005
+
+# families
+families = game_types %>%
+        filter(type == 'family') %>%
+        left_join(., active_games,
+                  by = c("game_id"))
+
+# summarize
+summarized_families = families %>%
+        group_by(value) %>%
+        summarize(median_bayesaverage = median(bayesaverage),
+                  median_average = median(average),
+                  n_games = n_distinct(game_id)) %>%
+        bind_cols(., active_games %>%
+                          summarize(total_games = n_distinct(game_id))) %>%
+        arrange(desc(n_games)) %>%
+        mutate(prop = n_games / total_games) %>%
+        filter(prop > minimum_prop)
+
+# bar chart
+summarized_families %>%
+        ggplot(., aes(x=reorder(value, n_games),
+                      y=n_games))+
+        geom_col()+
+        theme_phil()+
+        coord_flip()+
+        xlab("")+
+        ylab("number of games")
+
+# make datatablew
+summarized_families %>%
+        mutate_if(is.numeric, round, 2) %>%
+        datatable()
+
+```
+
+Which features are we electing to keep for this group? 
+
+```{r variables selected for families}
+
+# which family features are we keeping?
+selected_families = summarized_families %>%
+        filter(prop > minimum_prop) %>%
+        filter(!grepl("Admin: Better Description", value)) %>%
+        filter(!grepl("Digital Implementations", value)) %>%
+        filter(!grepl("Misc:", value)) %>%
+        filter(!grepl("Upcoming Releases", value)) %>%
+        filter(!grepl("Components: Game Trayzinside", value)) %>%
+        mutate(tidied = tolower(gsub("[[:space:]]", "_", gsub("\\s+", " ", gsub("[[:punct:]]","", value))))) %>%
+        mutate(tidied = paste("family", tidied, sep="_")) %>%
+        select(value, tidied)
+
+# show summarized
+summarized_families %>%
+        filter(value %in% selected_families$value) %>%
+        select(-total_games) %>%
+        mutate_if(is.numeric, round, 2) %>%
+        flextable() %>%
+        autofit()
+
+```
+
+## Categories
+
+We'll do the same thing for categories, but this variable is much smaller and generally pretty well organized.
+
+```{r now look at categories, fig.height=8, fig.width=10}
+
+# categories
+categories = game_types %>%
+        filter(type == 'category') %>%
+        left_join(., active_games,
+                  by = c("game_id"))
+
+# summarize
+summarized_categories = categories %>%
+        group_by(value) %>%
+        summarize(median_bayesaverage = median(bayesaverage),
+                  median_average = median(average),
+                  n_games = n_distinct(game_id)) %>%
+        bind_cols(., active_games %>%
+                          summarize(total_games = n_distinct(game_id))) %>%
+        arrange(desc(n_games)) %>%
+        mutate(prop = n_games / total_games) %>%
+        filter(prop > minimum_prop)
+
+# make datatablew
+summarized_categories %>%
+        mutate_if(is.numeric, round, 2) %>%
+        datatable()
+# 
+# # bar chart
+# summarized_categories %>%
+#         ggplot(., aes(x=reorder(value, n_games),
+#                       y=n_games))+
+#         geom_col()+
+#         theme_phil()+
+#         coord_flip()+
+#         xlab("")+
+#         ylab("number of games")
+
+# jitter chart
+categories %>%
+        group_by(value) %>%
+        mutate(median_bayesaverage = median(bayesaverage, na.rm=T),
+               median_average = median(average, na.rm=T),
+               n = n()) %>%
+        ungroup() %>%
+        filter(n > 25) %>%
+        ggplot(., aes(x=reorder(value, median_average),
+                     # size = usersrated,
+                      by = game_id,
+                      y = average))+
+        geom_point(alpha=0.25,
+                   position = position_jitternormal(sd_x = 0.1))+
+        coord_flip()+
+        geom_boxplot(alpha = 0.4,
+                     outlier.shape = NULL,
+                     outlier.alpha =0,
+                     outlier.size=0)+
+        theme_phil()+
+        my_caption+
+        ggtitle("Top Rated BGG Categories",
+                subtitle = "Filtering to categories with at least 25 games")+
+        xlab("")
+
+
+```
+
+We'll keep all of these, though there will likely be some overlap between these and other features which we can take care of with a correlation filter.
+
+```{r variables for categories we are keeping}
+
+# which category features are we keeping?
+selected_categories = summarized_categories %>%
+        filter(prop > minimum_prop) %>%
+        mutate(tidied = tolower(gsub("[[:space:]]", "_", gsub("\\s+", " ", gsub("[[:punct:]]","", value))))) %>%
+        mutate(tidied = paste("category", tidied, sep="_")) %>%
+        select(value, tidied)
+
+# show summarized
+summarized_categories %>%
+        filter(value %in% selected_categories$value) %>%
+        mutate_if(is.numeric, round, 2) %>%
+        select(-total_games) %>%
+        flextable() %>%
+        autofit()
+```
+
+
+## Mechanics
+
+Mechanics are also pretty well organized, so we don't have to do much filtering.
+
+```{r now look at categories, fig.height=15, fig.width=10}
+
+# mechanics
+mechanics = game_types %>%
+        filter(type == 'mechanic') %>%
+        left_join(., active_games,
+                  by = c("game_id"))
+
+# summarize
+summarized_mechanics = mechanics %>%
+        group_by(value) %>%
+        summarize(median_bayesaverage = median(bayesaverage),
+                  median_average = median(average),
+                  n_games = n_distinct(game_id)) %>%
+        bind_cols(., active_games %>%
+                          summarize(total_games = n_distinct(game_id))) %>%
+        arrange(desc(n_games)) %>%
+        mutate(prop = n_games / total_games) %>%
+        filter(prop > minimum_prop)
+
+# make datatablew
+summarized_mechanics %>% 
+        mutate_if(is.numeric, round, 2) %>%
+        datatable()
+
+# # bar chart
+# summarized_mechanics %>%
+#         ggplot(., aes(x=reorder(value, n_games),
+#                       y=n_games))+
+#         geom_col()+
+#         theme_phil()+
+#         coord_flip()+
+#         xlab("")+
+#         ylab("number of games")
+
+# jitter chart
+mechanics %>%
+        group_by(value) %>%
+        mutate(median_bayesaverage = median(bayesaverage, na.rm=T),
+               median_average = median(average, na.rm=T),
+               n = n()) %>%
+        ungroup() %>%
+        filter(n > 25) %>%
+        ggplot(., aes(x=reorder(value, median_average),
+                     # size = usersrated,
+                      by = game_id,
+                      y = average))+
+        geom_point(alpha=0.25,
+                   position = position_jitternormal(sd_x = 0.1))+
+        coord_flip()+
+        geom_boxplot(alpha = 0.4,
+                     outlier.shape = NULL,
+                     outlier.alpha =0,
+                     outlier.size=0)+
+        theme_phil()+
+        my_caption+
+        ggtitle("Top Rated BGG Mechanics",
+                subtitle = "Filtering to mechanics with at least 25 games")+
+        xlab("")
+
+```
+
+We'll just keep all of the mechanics, as these are the main features of games that we'll focus our attention on.
+
+```{r which mechanics are we keeping}
+
+# which category features are we keeping?
+selected_mechanics = summarized_mechanics %>%
+        filter(prop > minimum_prop) %>%
+        mutate(tidied = tolower(gsub("[[:space:]]", "_", gsub("\\s+", " ", gsub("[[:punct:]]","", value))))) %>%
+        mutate(tidied = paste("mechanic", tidied, sep="_")) %>%
+        select(value, tidied)
+
+# show summarized
+summarized_mechanics %>%
+        filter(value %in% selected_mechanics$value) %>%
+        select(-total_games) %>%
+        flextable() %>%
+        autofit()
+```
+
+
+## Designers and Artists
+
+How should we handle artist and designer effects? We'll use a much lower proportion here, as very few designers would have designed ~ 100 games.
+
+```{r look at designers, warning=F, message=F}
+
+designer_prop = .001
+        
+# designers
+designers = game_types %>%
+        filter(type == 'designer') %>%
+        left_join(., active_games,
+                  by = c("game_id"))
+
+# summarize
+summarized_designers = designers %>%
+        group_by(value) %>%
+        summarize(median_bayesaverage = median(bayesaverage),
+                  median_average = median(average),
+                  n_games = n_distinct(game_id)) %>%
+        bind_cols(., active_games %>%
+                          summarize(total_games = n_distinct(game_id))) %>%
+        arrange(desc(n_games)) %>%
+        mutate(prop = n_games / total_games) %>%
+        filter(prop > designer_prop)
+#%>%
+  #      filter(prop > designer_prop)
+
+summarized_designers %>%
+        mutate_if(is.numeric, round, 2) %>%
+        datatable()
+
+```
+
+```{r also look at artists}
+
+artist_prop = .001
+        
+# artists
+artists = game_types %>%
+        filter(type == 'artist') %>%
+        left_join(., active_games,
+                  by = c("game_id"))
+
+# summarize
+summarized_artists = artists %>%
+        group_by(value) %>%
+        summarize(median_bayesaverage = median(bayesaverage),
+                  median_average = median(average),
+                  n_games = n_distinct(game_id)) %>%
+        bind_cols(., active_games %>%
+                          summarize(total_games = n_distinct(game_id))) %>%
+        arrange(desc(n_games)) %>%
+        mutate(prop = n_games / total_games) %>%
+        filter(prop > artist_prop) 
+#%>%
+  #      filter(prop > artist_prop)
+
+summarized_artists %>%
+        mutate_if(is.numeric, round, 2) %>%
+        datatable()
+
+```
+
+```{r artist and designer features to keep}
+
+# which category features are we keeping?
+selected_designers = summarized_designers %>%
+        filter(prop > designer_prop) %>%
+        mutate(tidied = tolower(gsub("[[:space:]]", "_", gsub("\\s+", " ", gsub("[[:punct:]]","", value))))) %>%
+        mutate(tidied = paste("designer", tidied, sep="_")) %>%
+        select(value, tidied)
+
+# which category features are we keeping?
+selected_artists = summarized_artists %>%
+        filter(prop > artist_prop) %>%
+        mutate(tidied = tolower(gsub("[[:space:]]", "_", gsub("\\s+", " ", gsub("[[:punct:]]","", value))))) %>%
+        mutate(tidied = paste("artist", tidied, sep="_")) %>%
+        select(value, tidied)
+
+```
+
+
+## Publishers
+
+Publishers are a bit more tricky. If we look at the top rated publishers, we'll notice something a bit odd. Some of the publishers we'll recognize, but we also see some names that might not make a a lot of sense. Why are Asmodee Italia and Galapagos towards the top? The reason for this is foreign language publishers - once a game becomes popular enough, these games end up being published in foreign languages. This means certain publishers are a reflection of the outcome we are trying to predict (the average and bayes average), and shouldn't be used as predictors in models of these outcomes.
+
+```{r look at publishers, fig.height=10, fig.width=10}
+
+# publishers
+publishers = game_types %>%
+        filter(type == 'publisher') %>%
+        left_join(., active_games,
+                  by = c("game_id"))
+
+# summarize
+summarized_publishers = publishers %>%
+        group_by(value, id) %>%
+        summarize(median_bayesaverage = median(bayesaverage),
+                  median_average = median(average),
+                  n_games = n_distinct(game_id),
+                  .groups = 'drop') %>%
+        bind_cols(., active_games %>%
+                          summarize(total_games = n_distinct(game_id))) %>%
+        arrange(desc(n_games)) %>%
+        mutate(prop = n_games / total_games)
+# # make datatablew
+# summarized_publishers %>% 
+#         mutate_if(is.numeric, round, 2) %>%
+#         datatable()
+
+# # bar chart
+# summarized_publishers %>%
+#         ggplot(., aes(x=reorder(value, n_games),
+#                       y=n_games))+
+#         geom_col()+
+#         theme_phil()+
+#         coord_flip()+
+#         xlab("")+
+#         ylab("number of games")
+
+# jitter chart
+publishers %>%
+        group_by(value) %>%
+        mutate(median_bayesaverage = median(bayesaverage, na.rm=T),
+               median_average = median(average, na.rm=T),
+               n = n()) %>%
+        ungroup() %>%
+        filter(n > 100) %>%
+        ggplot(., aes(x=reorder(value, median_average),
+                     # size = usersrated,
+                      by = game_id,
+                      y = average))+
+        geom_point(alpha=0.25,
+                   position = position_jitternormal(sd_x = 0.1))+
+        coord_flip()+
+        geom_boxplot(alpha = 0.4,
+                     outlier.shape = NULL,
+                     outlier.alpha =0,
+                     outlier.size=0)+
+        theme_phil()+
+        my_caption+
+        ggtitle("Top Rated BGG publishers",
+                subtitle = "Filtering to publishers with at least 100 games")+
+        xlab("")
+
+
+```
+
+So what should we do? I've settled on creating a 'white-list' for publishers, meaning publishers that have been the original publisher of popular games. 
+
+```{r publisher features}
+
+publisher_list = c(51,
+                   102,
+                   196,
+                   396,
+                   1027,
+                   21847,
+                   10,
+                   1001,
+            #       512,
+                   4,
+                   140,
+                   157,
+                   34,
+                   28,
+                   10001,
+                   39,
+                   37,
+                   20,
+                   3,
+                   538,
+                   52,
+                   8923,
+                   17,
+                   5,
+                   3320,
+                   597,
+               #     5400, matagot, dropping for now due to leakage issues with publishing in france
+                   26,
+                   47,
+                   11652,
+                   19,
+                   13,
+                   12024,
+                   10754,
+                   21608,
+                   108,
+                   221,
+                   171,
+                   93,
+                   25842,
+                   140,
+            23202,
+                   28072)
+
+
+selected_publishers = summarized_publishers %>%
+        filter(id %in% publisher_list) %>%
+        mutate(tidied = tolower(gsub("[[:space:]]", "_", gsub("\\s+", " ", gsub("[[:punct:]]","", value))))) %>%
+        mutate(tidied = paste("publisher", tidied, sep="_")) %>%
+        select(value, tidied)
+
+summarized_publishers %>%
+        filter(value %in% selected_publishers$value) %>%
+        mutate_if(is.numeric, round, 2) %>%
+        select(-id) %>%
+        flextable() %>%
+        autofit()
+        
+```
+
+We'll save these sets of features we're keeping.
+
+```{r get selected}
+
+types_selected= mget(ls(pattern = "selected_"))
+
+save(types_selected, file = here::here("local/types_selected.Rdata"))
+
+```
+
+
+```{r wipe and remove} 
+
+rm(list=ls())
+
+```
+
