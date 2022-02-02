@@ -23,6 +23,7 @@ function(x) {
         x<-gsub("_", " ", x)
         
         x = str_to_title(x)
+        x = gsub("Usa", "USA", x)
         x = gsub("Bgg Average", "BGG Average", x)
         x = gsub("World War Ii", "World War II", x)
         x = gsub("Gmt", "GMT", x)
