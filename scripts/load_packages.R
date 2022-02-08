@@ -160,6 +160,7 @@ conflict_prefer("compose", "flextable")
 conflict_prefer("melt", "reshape2")
 conflict_prefer("set_names", "magrittr")
 conflict_prefer("flatten", "purrr")
+conflict_prefer("tune", "tune")
 
 
 ##file.create(".Rprofile.")

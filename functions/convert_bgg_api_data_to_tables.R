@@ -6,7 +6,7 @@ convert_bgg_api_data_to_tables =
                 source(here::here("functions/pivot_and_dummy_types.R"))
         
         # extract tables
-        print(paste("creating tables"))
+       # print(paste("creating tables"))
         
         # types
         game_types= input_api_returned$game_categories %>%

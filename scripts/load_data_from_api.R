@@ -27,7 +27,6 @@ source(here::here("functions/get_bgg_data_from_api.R"))
 n = 400
 batches = split(bgg_ids, ceiling(seq_along(bgg_ids)/n))
 
-# run through function
 batches_returned = foreach(b = 1:length(batches),
                            .errorhandling = 'pass') %do% {
         
@@ -35,7 +34,7 @@ batches_returned = foreach(b = 1:length(batches),
         out = get_bgg_api_data(batches[[b]])
         
         # pause to avoid taxing the API
-        Sys.sleep(10)
+        Sys.sleep(20)
         
         # print
       #  print(paste("batch", b, "of", length(batches), "complete"))
@@ -44,7 +43,43 @@ batches_returned = foreach(b = 1:length(batches),
         # return
         out
         
+        }
+
+# check the lengths of each batch
+check = data.frame(length = lengths(batches_returned),
+           batch = seq(batches_returned))
+
+# batches with prpblems
+problems = check %>%
+        filter(length!=9) %>%
+        pull(batch)
+
+# rerun problem batches
+batches_problems = foreach(b = 1:length(problems),
+                           .errorhandling = 'pass') %do% {
+                                   
+                                   # push batch 
+                                   out = get_bgg_api_data(batches[[problems[b]]])
+                                   
+                                   # pause to avoid taxing the API
+                                   Sys.sleep(20)
+                                   
+                                   # print
+                                   #  print(paste("batch", b, "of", length(batches), "complete"))
+                                   cat(paste("batch", b, "of", length(problems), "complete"), sep="\n")
+                                   
+                                   # return
+                                   out
+                                   
                            }
+
+
+# combine to ensure we have data for every batch
+batches_all = c(batches_returned,
+                batches_problems)
+
+# fix
+batches_returned[[problems]] = batches_problems[[1]]
 
 # pulling from API done
 print(paste("saving to local"))
@@ -163,7 +198,7 @@ print(paste("now writing to bigquery"))
 ### push to GCP 
 # library bigrquery
 library(bigrquery)
-library(bigQueryR)
+#library(bigQueryR)
 library(DBI)
 
 bq_auth(email = 'phil.henrickson@aebs.com')
@@ -223,7 +258,7 @@ print(paste("game_images loaded"))
 # game info
 dbWriteTable(bigquerycon,
              name = "api_game_info",
-             overwrite = T,
+             append = T,
              value = game_info)
 
 ## all done

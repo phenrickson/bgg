@@ -5,7 +5,7 @@ library(tidyverse)
 library(magrittr)
 library(odbc)
 library(bigrquery)
-library(bigQueryR)
+#library(bigQueryR)
 library(DBI)
 library(keyring)
 
@@ -50,7 +50,7 @@ github_files<-foreach(i = 1:length(date_grid),
 
 # trim down
 bgg_load<- github_files %>%
-        select(date,
+        dplyr::select(date,
                game_id,
                #  game_name,
                game_release_year,

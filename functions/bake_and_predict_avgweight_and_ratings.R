@@ -21,7 +21,9 @@ function(id,
                 # use function to get record from bgg
                 suppressMessages({
                         raw_record = get_game_record(id) %>%
-                                mutate(number_designers = rowSums(across(starts_with("des_"))))
+                                mutate(number_designers = rowSums(across(starts_with("des_")))) %>%
+                                mutate(yearpublished = case_when(is.na(yearpublished) ~ year(Sys.Date())+1,
+                                                                TRUE ~ yearpublished))
                 })
                 
                 # get training set

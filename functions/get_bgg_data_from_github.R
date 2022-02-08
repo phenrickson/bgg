@@ -1,6 +1,6 @@
 get_bgg_data_from_github <-
 function(input_date) {
-        
+
         url = paste("https://raw.githubusercontent.com/beefsack/bgg-ranking-historicals/master/", input_date, ".csv", sep="")
         
         data <- read_csv(url,
@@ -17,7 +17,7 @@ function(input_date) {
                        users_rated = `Users rated`,
                        bgg_url = URL,
                        thumbnail = Thumbnail) %>%
-                select(date, everything())
+                dplyr::select(date, everything())
         
         return(data)
         
