@@ -36,6 +36,7 @@ tidy_name_func <-
                 x = gsub("Murdermystery", "Murder Mystery", x)
                 x = gsub("Bgg Average", "BGG Average", x)
                 x = gsub("World War Ii", "World War II", x)
+                x = gsub("Gemscrystals", "Gems & Crystals", x)
                 x = gsub("History ", "", x)
                 x = gsub("Gmt", "GMT", x)
                 x = gsub("Cmon", "CMON", x)
