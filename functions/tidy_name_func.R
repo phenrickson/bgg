@@ -7,8 +7,12 @@ tidy_name_func <-
                 x<-gsub("mechanic_deduction", "mechanic_deduction_mechanicanic", x)
                 x<-gsub("category_novelbased", "category_novel_based", x)
                 x<-gsub("category_realtime", "category_realtime_game", x)
+                x<-gsub("category_miniatures", "category_miniatures_game", x)
+                x<-gsub("family_components_miniatures", "has_miniatures", x)
                 x<-gsub("mechanic_realtime", "mechanic_realtime_mechanicanic", x)
                 x<-gsub("mechanic_memory", "mechanic_memory_mechanicanic", x)
+                x<-gsub("family_components_miniatures", "has_miniatures", x)
+                x<-gsub("designer_uncredited", "uncredited_designer", x)
                 x<-gsub("category_","", x)
                 x<-gsub("components_", "", x)
                 x<-gsub("country_", "", x)
@@ -27,6 +31,7 @@ tidy_name_func <-
                 x<-gsub("_", " ", x)
                 
                 x = str_to_title(x)
+                x = gsub("Rockpaperscissors", "Rock Paper Scissors", x)
                 x = gsub("Collectible Collectible", "Collectible", x)
                 x = gsub("Murdermystery", "Murder Mystery", x)
                 x = gsub("Bgg Average", "BGG Average", x)
@@ -43,6 +48,7 @@ tidy_name_func <-
                 x = gsub("3dimensional", "", x)
                 x = gsub("3d", "3D", x)
                 x = gsub("Usa", "USA", x)
+                x = gsub("Averageweight", "Average Weight", x)
                 x
                 
         }

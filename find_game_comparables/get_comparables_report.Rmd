@@ -80,7 +80,7 @@ record = get_game_record(params$id) %>%
 
 ```
 
-## What is this analysis?
+## What is this Analysis?
 
 This notebook is for selecting any boardgame and identifying **its most comparable games using data from boardgamegeek.com**. I use a dimension reduction method (PCA) to learn the main points of variation in data about games from boardgamegeek. To find similar games, I compute the distance between all games using their first twenty principal components. I use the distance between games to determine their overall similarity. Games that are close to each other are said to be *neighbors*.
 
@@ -999,9 +999,9 @@ profile_df %>%
         ylab("")+
         theme(panel.grid.minor = element_blank(),
               panel.grid.major = element_blank())+
-        scale_fill_gradient2(low = "red",
+        scale_fill_gradient2(low = "blue",
                              mid = "white",
-                             high = "blue",
+                             high = "red",
                              limits = c(-5, 5),
                              oob = scales::squish)+
         ggtitle(paste("How are games similar to ", record$name[1], "?", sep=""),
@@ -1045,9 +1045,9 @@ unsupervised_neighbor_components %>%
   xlab("contribution")+
   guides(fill = guide_colorbar(barwidth = 10,
                                barheight=0.5))+
-        scale_fill_gradient2(low = "red",
+        scale_fill_gradient2(low = "blue",
                              mid = "white",
-                             high = "blue",
+                             high = "red",
                             # limits = c(-5, 5),
                              oob = scales::squish)+
   ggtitle("What contributes to each principal component?")+

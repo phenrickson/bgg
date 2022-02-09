@@ -1,0 +1,633 @@
+---
+title: "Forecasting the Number of BGG Ratings"
+author: Phil Henrickson
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+        toc: true
+        toc_depth: 2
+        number_sections: true
+---
+
+# What is this Analysis? {-}
+
+This notebook is for working with historical time series data from boardgamegeek. We have historical data on selected features using data from https://github.com/beefsack/bgg-ranking-historicals. This will allow us to investigate questions such as, can we forecast the number of ratings a game will get in 1-2 years?
+
+```{r global seetings, echo=F, warning=F, message=F}
+
+knitr::opts_chunk$set(echo = F,
+                      messages=F,
+                      warning=F,
+                      dev="png",
+                      fig.width = 10,
+                      fig.height = 6)
+
+
+options(knitr.duplicate.label = "allow")
+options(scipen=999)
+
+```
+
+```{r load and set packages, warning=F, message=F, include=FALSE, results = 'hide'}
+# source
+source(here::here("scripts/load_packages.R"))
+source(here::here("functions/theme_phil.R"))
+
+library(magick)
+library(flextable)
+library(bggAnalytics)
+library(tidymodels)
+library(workflows)
+library(rsample)
+
+set_flextable_defaults(theme_fun = theme_booktabs,
+                       font.color = "black",
+  padding.bottom = 6, 
+  padding.top = 6,
+  padding.left = 6,
+  padding.right = 6,
+  background.color = "white")
+
+```
+
+# Examining BGG Time Series Data
+
+```{r connect to big query}
+
+library(bigrquery)
+
+# get project credentials
+PROJECT_ID <- "gcp-analytics-326219"
+BUCKET_NAME <- "test-bucket"
+
+# authorize
+bq_auth(email = "phil.henrickson@aebs.com")
+
+# establish connection
+bigquerycon<-dbConnect(
+        bigrquery::bigquery(),
+        project = PROJECT_ID,
+        dataset = "bgg"
+)
+
+# query table
+active_games<-DBI::dbGetQuery(bigquerycon, 
+                              'SELECT * FROM bgg.active_games_daily')
+
+# create caption for plots
+my_caption = list(labs(caption = paste(paste("Data from boardgamegeek.com as of", max(as.Date(active_games$timestamp))),
+                        paste("Data and analysis at github.com/phenrickson/bgg"), sep="\n")))
+
+```
+
+Our main dataset for analysis is daily table of game rankings and user ratings from the end of 2016 to present. We'll additionally pull down a table containing active records for games on BGG.
+
+```{r query bgg ts, eval=F}
+
+# # query table
+# games_ts<-DBI::dbGetQuery(bigquerycon, 
+#                               'SELECT * FROM bgg.historical_game_rankings')
+
+```
+
+```{r store locally}
+
+# # save a copy to local
+# readr::write_rds(games_ts, file = paste(here::here("local/", paste("games_ts_", Sys.Date(), ".Rdata", sep=""))))
+
+# read local copy
+games_ts_files = grep("games_ts", list.files(here::here("local/")), value =T)
+
+# most recent
+most_recent = games_ts_files %>%
+        as_tibble() %>%
+        separate(value, into = c("data", "type", "file"), sep = "_") %>%
+        separate(file, into = c("date", "format"), sep="\\.") %>%
+        mutate(date = as.Date(date)) %>%
+        filter(date == max(date)) %>%
+        pull(date)
+
+games_ts = readr::read_rds(paste(here::here("local/", paste("games_ts_", most_recent, ".Rdata", sep=""))))
+
+```
+
+We need to convert our historical table into a time series dataset. It turns out there are some data quality issues we need to tidy up beforehand, with some games being entered multiple times on a given day. We'll filter for duplicates in creating a tsibble object with the date as the index and the game_ids as the key. We don't want balanced panels, as certain games were released during this time period.
+
+```{r deal with this using a tsibble}
+
+repeat.before = function(x) {   # repeats the last non NA value. Keeps leading NA
+    ind = which(!is.na(x))      # get positions of nonmissing values
+    if(is.na(x[1]))             # if it begins with a missing, add the 
+          ind = c(1,ind)        # first position to the indices
+    rep(x[ind], times = diff(   # repeat the values at these indices
+       c(ind, length(x) + 1) )) # diffing the indices + length yields how often 
+} 
+
+games_tsibble<- games_ts %>%
+        filter(!are_duplicated(games_ts, index=date, key=game_id)) %>% # remove duplicates
+        filter(game_id %in% active_games$game_id) %>%  # filter to only games that we have active records on
+        as_tsibble(index = date,
+                   key = game_id) %>%
+        tsibble::fill_gaps(., .full=FALSE) %>%
+        mutate_at(c("game_release_year", 
+                    "bgg_rank",
+                    "bgg_average",
+                    "bayes_average",
+                    "users_rated"),
+                 repeat.before) 
+
+```
+
+So, we now have a pretty tidy dataset of games from 2016 onwards. We can see how many games are in the dataset, how many total ratings have accumulated, as well as the average of games.
+
+```{r number of games and ratings}
+
+games_tsibble %>%
+        ungroup() %>%
+        index_by(date) %>%
+        summarize(number_games = n_distinct(game_id),
+               number_ratings = sum(users_rated),
+               mean_bgg_average = mean(bgg_average, na.rm=T)) %>%
+        gather("variable", "value", -date) %>%
+        ggplot(., aes(x=date,
+                      y=value))+
+        geom_line()+
+        facet_wrap(variable ~.,
+                   scales = "free_y",
+                   ncol = 1)+
+        theme_bw()
+        
+```
+
+For any given game, we can then track its number of ratings, average, and geek average from the moment it enters the dataset onwards. 
+
+
+For instance, here is the data we have on a game that was released during this time period.
+
+```{r examples of games}
+
+# nemesis
+samp_id = 167355
+
+# plot
+games_tsibble %>% 
+        filter(game_id == samp_id) %>% 
+        gather("variable", "value",
+               -date, -game_id, -game_release_year) %>%
+        ggplot(., aes(x=date,
+                      y=value))+
+        facet_wrap(variable~.,
+                   ncol =2,
+                   scales = "free_y")+
+        geom_line()+
+        scale_x_date()+
+        xlab("")+
+        theme_bw()+
+        ggtitle(paste("Game Title:", active_games %>%
+        filter(game_id == samp_id) %>%
+        pull(name),
+        sep = " "))
+
+```
+
+For games which released earlier than 2016, such as Concordia, we don't have data from the time of release, so we aren't able to see their full historical movement.
+
+```{r plot concordia}
+
+# crokinole
+samp_id = 124361
+
+# plot
+games_tsibble %>% 
+        filter(game_id == samp_id) %>% 
+        gather("variable", "value",
+               -date, -game_id, -game_release_year) %>%
+        ggplot(., aes(x=date,
+                      y=value))+
+        facet_wrap(variable~.,
+                   ncol =2,
+                   scales = "free_y")+
+        geom_line()+
+        scale_x_date()+
+        xlab("")+
+        theme_bw()+
+        ggtitle(paste("Game Title:", active_games %>%
+        filter(game_id == samp_id) %>%
+        pull(name),
+        sep = " "))
+
+```
+
+I'm curious to look at a game like Brass Birmingham looks like, and how quickly it rose.
+
+```{r plot brass birmingham}
+
+# crokinole
+samp_id = 224517
+
+# plot
+games_tsibble %>% 
+        filter(game_id == samp_id) %>% 
+        gather("variable", "value",
+               -date, -game_id, -game_release_year) %>%
+        ggplot(., aes(x=date,
+                      y=value))+
+        facet_wrap(variable~.,
+                   ncol =2,
+                   scales = "free_y")+
+        geom_line()+
+        scale_x_date()+
+        xlab("")+
+        theme_bw()+
+        ggtitle(paste("Game Title:", active_games %>%
+        filter(game_id == samp_id) %>%
+        pull(name),
+        sep = " "))
+
+```
+
+
+# Fastest Rising Games
+
+This makes me wonder, what games released during this time period had the most rapid rise in rankings? To answer this, we'll filter to only games that entered the dataset since the end of 2016. Then, we'll look to see which game had the highest ranking within set days of release
+
+I also want to take some care to remove games from this analysis that seem to have entered the dataset with many more ratings than others. These seem to be reimplemnentations of previous games that have inherited their old data. 
+
+```{r find games that were released and climbed the fastest, fig.height=6, fig.width=10, warning=F, message=F}
+# # function for lag/lead
+# apply_lags <- function(mydf, k) {
+#   dplyr::lag(mydf, n = k)
+# }
+
+# interval 
+ts = c(50, 100, 365, 500, 720)
+
+# get games that started
+games_started<-games_tsibble %>% 
+        ungroup() %>%
+        mutate(minimum_date = min(date)) %>%
+        group_by(game_id) %>%
+        mutate(start_date = min(date)) %>%
+        ungroup() %>%
+        filter(start_date > minimum_date) %>%
+        filter(date == start_date) %>%
+        left_join(., active_games %>%
+                          select(game_id, yearpublished),
+                  by = c("game_id")) %>%
+        as_tibble() %>%
+        select(game_id, start_date, yearpublished)
+
+
+# get a dataset with their differences
+game_diffs = games_tsibble %>%
+        as_tibble() %>%
+        ungroup() %>%
+        filter(game_release_year <= year(Sys.Date())) %>% #remove problem records
+        filter(game_id %in% games_started$game_id) %>% # filter to only games that entered the dataset 
+      #  filter(game_id ==  224517) %>%
+        # timetk::tk_augment_leads(., c(users_rated,
+        #                               bgg_average,
+        #                               bayes_average),
+        #                          .lags = -365) %>%
+        left_join(., games_started,
+                  by = "game_id") %>%
+        filter(date == start_date | 
+                       date == start_date + ts[1] | 
+                       date == start_date + ts[2] | 
+                       date  == start_date + ts[3] |
+                       date == start_date + ts[4] |
+                       date == start_date + ts[5]) %>%
+        arrange(game_id) %>%
+        mutate(interval = date - start_date) %>%
+        select(yearpublished, game_id,
+               interval, 
+               date,
+               interval,
+               bgg_rank,
+               bgg_average,
+               bayes_average,
+               users_rated) %>%
+        gather("variable", "value", -game_id, -yearpublished, -date, -interval) %>%
+        mutate(interval = case_when(interval == 0 ~ 'Day_0',
+                                    TRUE ~ paste("Day", as.character(interval), sep = "_"))) %>%
+        pivot_wider(id_cols = c("yearpublished",
+                                "game_id",
+                                "variable"),
+                    names_from = c("interval"),
+                    values_from = c("value"))
+
+# release ids
+release_ids = game_diffs %>%
+        filter(yearpublished > 2016) %>%
+      #  filter(!is.na(Day_365)) %>%
+   #     mutate(Diff = Day_t - Day_0) %>%
+        left_join(., active_games %>%
+                          select(game_id, name),
+                  by = c("game_id")) %>%
+        select(yearpublished, game_id, name, everything()) %>%
+        filter(variable == 'users_rated') %>%
+    #    arrange(desc(Diff)) %>%
+        pull(game_id) %>%
+        unique()
+
+# now assemble a dataset with these
+games_release = games_tsibble %>%
+        filter(bayes_average > 1) %>%
+        filter(game_id %in% release_ids) %>%
+        left_join(., games_started,
+                   by= c("game_id")) %>%
+        mutate(days_since_release = as.numeric(date - start_date)) %>%
+        as_tibble() %>%
+        select(date, days_since_release, yearpublished, game_id, bgg_rank, bayes_average, bgg_average, users_rated) %>%
+        left_join(., active_games %>%
+                          select(game_id, name),
+                  by = c("game_id")) %>%
+        gather("variable", "value", -date, -days_since_release, -yearpublished, -game_id, -name)
+
+library(ggforce)
+# now exclude games that entered the dataset with high values
+games_release %>% 
+        filter(days_since_release == 0) %>% 
+        mutate(lab = case_when(variable == 'users_rated' & value > 150 ~ name,
+                               variable == 'bayes_average' & value > 6 ~ name)) %>%
+        ggplot(., aes(x=days_since_release, 
+                      label = lab,
+                      y=value))+
+        facet_wrap(variable~., ncol =2, scales="free_y")+
+        geom_point(alpha = 0.5, position = position_jitternormal(sd_x = 0.1))+
+        theme_phil()+
+        coord_cartesian(xlim = c(-1, 1))+
+        geom_label_repel()
+
+# filter out issue games
+problem_ids = games_release %>%
+        mutate(flag = case_when(days_since_release ==0 & variable == 'users_rated' & value > 100 ~ 1,
+                                TRUE ~ 0)) %>%
+        group_by(game_id, name, yearpublished) %>%
+        summarize(flag = sum(flag),
+                  .groups = 'drop') %>%
+        arrange(desc(flag)) %>%
+        filter(flag == 1) %>%
+        pull(game_id)
+
+# now remove
+games_release = games_release %>%
+        filter(!(game_id %in% problem_ids))
+
+```
+
+
+### User Ratings
+
+Which game had the most growth in user ratings within one year?
+
+```{r data table of user ratings diff in 365 days}
+
+# fastest 
+game_diffs %>%
+        filter(yearpublished > 2016) %>%
+        filter(!is.na(Day_365)) %>%
+        mutate(Diff = Day_365 - Day_0) %>%
+        left_join(., active_games %>%
+                          select(game_id, name),
+                  by = c("game_id")) %>%
+        select(yearpublished, game_id, name, variable, Day_0, Day_365, Diff) %>%
+        filter(variable == 'users_rated') %>%
+        arrange(desc(Diff)) %>%
+        mutate_at(c("yearpublished", "game_id"),
+                  ~ as.character(.)) %>%
+        datatable()
+
+```
+
+```{r highlight bayes averes against, warning=F, message=F, fig.height=6, fig.width=10}
+
+days = 365
+rate = 5000
+
+plot_users_rated  = 
+games_release %>%
+        filter(variable == 'users_rated') %>%
+        filter(days_since_release < days+1) %>%
+        mutate(highlight = case_when(days_since_release == max(days_since_release) & value > rate ~ name,
+                                     TRUE ~ NA_character_))
+
+getPalette = colorRampPalette( brewer.pal( 6 , "RdBu" ) )
+myPal = getPalette(plot_users_rated %>% filter(!is.na(highlight)) %>% nrow())
+
+plot_users_rated_background = plot_users_rated %>%
+        ggplot(., aes(x=days_since_release,
+                      group = game_id,
+                #      color = highlight,
+                  #    label = highlight,
+                      y=value))+
+        geom_line(alpha=0.1,
+                  lwd = 0.8)+
+        # geom_dl(aes(label = highlight), 
+        #           method = list(dl.combine("last.points")), cex = 0.8) +
+        facet_wrap(variable~.,
+                   scales = "free_y")+
+        theme_phil()+
+        coord_cartesian(clip = 'off',
+                        xlim = c(0, days + (days*0.1)))
+
+# highlighted games
+highlighted = plot_users_rated %>%
+        filter(!is.na(highlight)) %>%
+        arrange(desc(value)) %>%
+        mutate(highlight = factor(highlight,
+                             levels = .$highlight))
+
+
+plot_users_rated_background +
+        geom_line(data = plot_users_rated %>%
+                          filter(game_id %in% (plot_users_rated %>%
+                                                       filter(!is.na(highlight)) %>%
+                                                       pull(game_id))) %>%
+                          mutate(highlight = factor(highlight,
+                                                    levels = highlighted$name)) %>%
+                          mutate(name = factor(name,
+                                                    levels = highlighted$name)),
+                  aes(x=days_since_release,
+                      group = game_id,
+                      color = name),
+                  alpha=0.9,
+                  lwd = 0.8)+
+        guides(color = "none")+
+         geom_label_repel(data = plot_users_rated %>%
+                                  filter(game_id %in% (plot_users_rated %>%
+                                                       filter(!is.na(highlight)) %>%
+                                                       pull(game_id))) %>%
+                                  filter(days_since_release == max(days_since_release)) %>%
+                                  mutate(highlight = factor(highlight,
+                                                    levels = highlighted$name)) %>%
+                                  mutate(name = factor(name,
+                                                    levels = highlighted$name)),
+                         aes(label = name,
+                             color = name),
+                         max.overlaps=5,
+                         hjust = 0,
+                         force = 1,
+                         direction = "y",
+                         segment.size = 0.2,
+                         nudge_x = 10)+
+        scale_color_viridis_d(begin = 0,
+                              end = 0.85,
+                              option = "magma")+
+        xlab("Days Since Game Entered Dataset")+
+        ylab("Users Rated")
+        
+      # scale_color_manual(values = myPal)
+
+```
+
+### Geek Rating
+
+```{r table of geek rating diff in 365 days}
+
+# fastest 
+game_diffs %>%
+        filter(Day_0 > 1) %>%
+        filter(yearpublished > 2016) %>%
+        filter(!is.na(Day_365)) %>%
+        mutate(Diff = Day_365 - Day_0) %>%
+        left_join(., active_games %>%
+                          select(game_id, name),
+                  by = c("game_id")) %>%
+        select(yearpublished, game_id, name, variable, Day_0, Day_365, Diff) %>%
+        filter(variable == 'bayes_average') %>%
+        arrange(desc(Diff)) %>%
+        mutate_at(c("yearpublished", "game_id"),
+                  ~ as.character(.)) %>%
+        mutate_if(is.numeric, round, 2) %>%
+        datatable()
+
+```
+
+
+```{r highlight bayes averes against, warning=F, message=F, fig.height=6, fig.width=10}
+
+days = 365
+rate = 7.5
+
+plot_bayes_average  = 
+games_release %>%
+        filter(variable == 'bayes_average') %>%
+        filter(days_since_release < days+1) %>%
+        mutate(highlight = case_when(days_since_release == max(days_since_release) & value > rate ~ name,
+                                     TRUE ~ NA_character_))
+
+getPalette = colorRampPalette( brewer.pal( 6 , "RdBu" ) )
+myPal = getPalette(plot_bayes_average %>% filter(!is.na(highlight)) %>% nrow())
+
+plot_bayes_average_background = plot_bayes_average %>%
+        ggplot(., aes(x=days_since_release,
+                      group = game_id,
+                #      color = highlight,
+                  #    label = highlight,
+                      y=value))+
+        geom_line(alpha=0.1,
+                  lwd = 0.8)+
+        # geom_dl(aes(label = highlight), 
+        #           method = list(dl.combine("last.points")), cex = 0.8) +
+        facet_wrap(variable~.,
+                   scales = "free_y")+
+        theme_phil()+
+        coord_cartesian(clip = 'off',
+                        xlim = c(0, days + (days*0.1)))
+
+# highlighted games
+highlighted = plot_bayes_average %>%
+        filter(!is.na(highlight)) %>%
+        arrange(desc(value)) %>%
+        mutate(highlight = factor(highlight,
+                             levels = .$highlight))
+
+
+plot_bayes_average_background +
+        geom_line(data = plot_bayes_average %>%
+                          filter(game_id %in% (plot_bayes_average %>%
+                                                       filter(!is.na(highlight)) %>%
+                                                       pull(game_id))) %>%
+                          mutate(highlight = factor(highlight,
+                                                    levels = highlighted$name)) %>%
+                          mutate(name = factor(name,
+                                                    levels = highlighted$name)),
+                  aes(x=days_since_release,
+                      group = game_id,
+                      color = name),
+                  alpha=0.9,
+                  lwd = 0.8)+
+        guides(color = "none")+
+         geom_label_repel(data = plot_bayes_average %>%
+                                  filter(game_id %in% (plot_bayes_average %>%
+                                                       filter(!is.na(highlight)) %>%
+                                                       pull(game_id))) %>%
+                                  filter(days_since_release == max(days_since_release)) %>%
+                                  mutate(highlight = factor(highlight,
+                                                    levels = highlighted$name)) %>%
+                                  mutate(name = factor(name,
+                                                    levels = highlighted$name)),
+                         aes(label = name,
+                             color = name),
+                         max.overlaps=5,
+                         hjust = 0,
+                         force = 1,
+                         direction = "y",
+                         segment.size = 0.2,
+                         nudge_x = 10)+
+        scale_color_viridis_d(begin = 0,
+                              end = 0.85,
+                              option = "magma")+
+        xlab("Days Since Game Entered Dataset")+
+        ylab("Geek Rating")
+        
+      # scale_color_manual(values = myPal)
+
+```
+
+We can also overlay newer games on this to see how they're tracking by comparison.
+
+```{r show new games, warning=F, message=F, fig.height=6, fig.width=10}
+
+# now plot these
+games_release_new  = games_tsibble %>%
+        filter(bayes_average > 1) %>%
+        filter(game_release_year >2020) %>%
+        filter(!(game_id %in% problem_ids)) %>%
+        left_join(., games_started,
+                   by= c("game_id")) %>%
+        mutate(days_since_release = as.numeric(date - start_date)) %>%
+        as_tibble() %>%
+        select(date, days_since_release, yearpublished, game_id, bgg_rank, bayes_average, bgg_average, users_rated) %>%
+        left_join(., active_games %>%
+                          select(game_id, name),
+                  by = c("game_id")) %>%
+        gather("variable", "value", -date, -days_since_release, -yearpublished, -game_id, -name) %>%
+        filter(variable == 'bayes_average') %>%
+        filter(days_since_release < days+1) %>%
+        group_by(game_id) %>%
+        mutate(highlight = case_when(days_since_release == max(days_since_release) & value > 6.2 ~ name,
+                                     TRUE ~ NA_character_))
+
+plot_bayes_average_background +
+        geom_line(data = games_release_new,
+                  aes(x=days_since_release,
+                      y=value,
+                      group = game_id),
+                  lwd = 0.8,
+                  alpha=0.8,
+                  color = 'deepskyblue1')+
+        geom_label_repel(data = games_release_new,
+                         aes(label = highlight),
+                         max.overlaps=10,
+                         hjust = 0,
+                         size = 3,
+                         direction = "y",
+                         nudge_x = 3)+
+        xlab("Days Since Game Entered Dataset")+
+        ylab("Geek Rating")+
+        my_caption
+
+```
+
