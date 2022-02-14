@@ -34,7 +34,7 @@ batches_returned = foreach(b = 1:length(batches),
         out = get_bgg_api_data(batches[[b]])
         
         # pause to avoid taxing the API
-        Sys.sleep(20)
+        Sys.sleep(30)
         
         # print
       #  print(paste("batch", b, "of", length(batches), "complete"))
@@ -44,6 +44,8 @@ batches_returned = foreach(b = 1:length(batches),
         out
         
         }
+
+beepr::beep(1)
 
 # check the lengths of each batch
 check = data.frame(length = lengths(batches_returned),
@@ -79,7 +81,20 @@ batches_all = c(batches_returned,
                 batches_problems)
 
 # fix
-batches_returned[[problems]] = batches_problems[[1]]
+for (i in 1:length(problems)) {
+        batches_returned[[problems[i]]] = batches_problems[[i]]
+}
+
+#batches_returned[[problems]] = batches_problems[[1]]
+# check again
+check_again = data.frame(length = lengths(batches_returned),
+                   batch = seq(batches_returned)) %>%
+        filter(length ==9) %>%
+        nrow()
+
+# assert that we have the right length for all batches
+assertthat::are_equal(length(batches_returned),
+                      check_again)
 
 # pulling from API done
 print(paste("saving to local"))
