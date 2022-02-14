@@ -44,7 +44,7 @@ tidy_name_func <-
                 x = gsub("Movies Tv", "Movies TV", x)
                 x = gsub("Auctionbidding", "Auction Bidding", x)
                 x = gsub("Postnapoleonic", "Post Napoleonic", x)
-                x = gsub("Paperandpencil", "Paper and Pencil", x)
+                x = gsub("Paperandpencil", "Paper And Pencil", x)
                 x = gsub("Digital Hybrid Appwebsite Required", "Digital Hybrid App", x)
                 x = gsub("3dimensional", "", x)
                 x = gsub("3d", "3D", x)
