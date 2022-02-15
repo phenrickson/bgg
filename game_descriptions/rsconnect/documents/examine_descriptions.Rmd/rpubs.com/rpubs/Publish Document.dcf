@@ -1,0 +1,11 @@
+name: Publish Document
+title:
+username:
+account: rpubs
+server: rpubs.com
+hostUrl: rpubs.com
+appId: https://api.rpubs.com/api/v1/document/866452/65cd64b2122647d9b7327d0a704c1db6
+bundleId: https://api.rpubs.com/api/v1/document/866452/65cd64b2122647d9b7327d0a704c1db6
+url: http://rpubs.com/phenrickson91/866452/edit
+when: 1644961545.39823
+lastSyncTime: 1644961545.39824
