@@ -1,0 +1,937 @@
+---
+title: "What can we learn from boardgame descriptions?"
+author: Phil Henrickson
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: TRUE #adds a Table of Contents
+    number_sections: TRUE #number your headings/sections
+    toc_float: TRUE #let your ToC follow you as you scroll
+    theme: cerulean #select a different theme from the default
+    keep_md: yes
+    fig.caption: yes
+header-includes:
+ \usepackage{float}
+---
+
+<style type="text/css">
+div.main-container {
+  max-width: 1400px;
+  margin-left: auto;
+  margin-right: auto;
+}
+</style>
+
+```{r global settings, echo=F, warning=F, message=F, results='hide'}
+
+knitr::opts_chunk$set(echo = F,
+                      error=F,
+                      dev="png",
+                      fig.width = 10,
+                      fig.height = 6,
+                      fig.pos = 'H')
+
+options(knitr.duplicate.label = "allow")
+
+options(scipen=999)
+
+source(here::here("scripts/load_packages.R"))
+source(here::here("functions/theme_phil.R"))
+rm(a)
+
+```
+
+```{r flextable settings, echo=F, warning=F, message=F, results='hide'}
+
+#library(webshot2)
+library(flextable)
+library(tidytext)
+library(tm)
+library(igraph)
+library(ggraph)
+library(widyr)
+
+conflict_prefer("annotate", "ggplot2")
+# set_flextable_defaults(theme_fun = theme_alafoli,
+#                        font.color = "grey10",
+#   padding.bottom = 6, 
+#   padding.top = 6,
+#   padding.left = 6,
+#   padding.right = 6,
+#   background.color = "white")
+
+```
+
+```{r connect to big query, warning=F, message=F, results='hide'}
+
+library(bigrquery)
+
+# get project credentials
+PROJECT_ID <- "gcp-analytics-326219"
+BUCKET_NAME <- "test-bucket"
+
+# authorize
+bq_auth(email = "phil.henrickson@aebs.com")
+
+# establish connection
+bigquerycon<-dbConnect(
+        bigrquery::bigquery(),
+        project = PROJECT_ID,
+        dataset = "bgg"
+)
+
+# query table of game info to most recent load
+active_games<-DBI::dbGetQuery(bigquerycon, 
+                              'SELECT * FROM bgg.api_game_info
+                              where timestamp = (SELECT MAX(timestamp) as most_recent FROM bgg.api_game_info)') %>%
+        select(-starts_with("rank"))
+
+# create caption for plots
+my_caption = list(labs(caption = paste(paste("Data from boardgamegeek.com as of", max(as.Date(active_games$timestamp))),
+                        paste("Data and analysis at github.com/phenrickson/bgg"), sep="\n")))
+
+```
+
+```{r other tables to query as well}
+
+game_types= DBI::dbGetQuery(bigquerycon, 
+                              'SELECT * FROM bgg.api_game_categories')
+
+# get previously loaded features to keep
+load(here::here("local/types_selected.Rdata"))
+
+source(here::here("functions/tidy_name_func.R"))
+
+```
+
+```{r pivot categories, warning=F, message=F}
+
+# function for pivoting and making dummy variables
+pivot_and_dummy_types = function(input_data, input_type) {
+        
+        # pivoting
+        input_data %>%
+                filter(type == input_type) %>%
+                mutate(type_abbrev = substr(type, 1, 3)) %>%
+                mutate(value = tolower(gsub("[[:space:]]", "_", gsub("\\s+", " ", gsub("[[:punct:]]","", value))))) %>%
+                select(game_id, type, value) %>%
+                mutate(type = paste(type, value, sep="_")) %>%
+                mutate(has_type = 1) %>%
+                select(-value) %>%
+                pivot_wider(names_from = c("type"),
+                            values_from = c("has_type"),
+                            id_cols = c("game_id"),
+                            names_sep = "_",
+                            values_fn = min,
+                            values_fill = 0)
+        
+}
+
+# categories
+game_categories = pivot_and_dummy_types(game_types,
+                                  "category") %>%
+        select(game_id,
+               one_of(types_selected$selected_categories$tidied))
+        
+# family
+game_families= pivot_and_dummy_types(game_types,
+                                  "family") %>%
+        select(game_id,
+               one_of(types_selected$selected_families$tidied))
+        
+# mechanics
+game_mechanics = pivot_and_dummy_types(game_types,
+                                  "mechanic") %>%
+        select(game_id,
+               one_of(types_selected$selected_mechanics$tidied))
+
+# designers
+game_designers = pivot_and_dummy_types(game_types,
+                                  "designer") %>%
+        select(game_id,
+               one_of(types_selected$selected_designers$tidied))
+
+# publishers
+game_publishers = pivot_and_dummy_types(game_types,
+                                  "publisher") %>%
+        select(game_id,
+               one_of(types_selected$selected_publishers$tidied))
+
+# artists
+game_artists = pivot_and_dummy_types(game_types,
+                                  "artist") %>%
+        select(game_id,
+               one_of(types_selected$selected_artists$tidied))
+
+# # implementation
+# game_implementation = pivot_and_dummy_types(game_types,
+#                                   "implementation")
+
+```
+
+```{r query descriptions }
+
+# description
+game_descriptions = bq_table_download(paste(PROJECT_ID, "bgg.api_game_descriptions", sep="."),
+                                      n_max = nrow(active_games), 
+                                      page_size = 500)
+
+# images
+game_images = DBI::dbGetQuery(bigquerycon, 
+                              'SELECT * FROM bgg.api_game_images')
+
+```
+
+# The Data
+
+(Almost) every game on boardgamegeek has a description on its profile. These vary in length and tone, but they contain a lot of information to let users know a little about the game. I have previously explored using the BGG API to analyze games using information about game mechanics, categories, complexity, etc, but so far I haven't looked at the description field. What information can we glean from the descriptions?
+
+After some initial cleaning, we have a dataset containing **`r nrow(active_games %>% filter(yearpublished != 0))`** board games. Most of these have a description field. 
+
+
+```{r add description to active games}
+
+library(textutils)
+library(xml2)
+
+unescape_html <- function(str){
+  xml2::xml_text(xml2::read_html(paste0("<x>", str, "</x>")))
+}
+
+active_game_descriptions = active_games %>%
+        select(timestamp, game_id, name, yearpublished, average, bayesaverage, averageweight, usersrated, numcomments, owned) %>%
+        mutate_at(c("yearpublished",
+                    "averageweight"),
+              .funs = ~ na_if(., 0)) %>%
+        left_join(., game_descriptions,
+                  by = c("game_id")) %>%
+        filter(!is.na(yearpublished))
+
+# unescape html for descriptions
+active_game_descriptions$description = sapply(active_game_descriptions$description, unescape_html, USE.NAMES=F)
+
+rm(game_descriptions)
+
+```
+
+What do these descriptions look like? We can look at a couple of games and their descriptions to get a feel for typical decriptions.
+
+```{r examine a couple of sample games}
+
+active_game_descriptions %>%
+        filter(name == 'Concordia' | name == 'Sushi Go!' | name == 'Nemesis') %>%
+        mutate(game_id = as.character(game_id)) %>%
+        select(game_id, name, description) %>%
+        flextable() %>%
+        autofit() %>%
+        border_inner_h()
+
+```
+
+# Word Frequencies and Description Lengths
+
+In order to make use of the description, we need to do a bit of tidying.
+
+We'll tokenize the description for each game to get a record for each word in the description for every game. We'll remove stop words along the way, as we aren't that interested in the number of times we find words like 'the' or 'and' in descriptions. We'll also take care to remove stop words in other languages (Spanish, German) as well as some other things like numbers (1 player, 2 player, etc).
+
+```{r tokenize into individual words, warning=F, echo=T}
+
+data(stop_words)
+
+# add in some custom stops
+custom_stop_words = stop_words %>%
+        bind_rows(.,
+                  tibble(word = c(as.character(seq(1, 30))),
+                               lexicon = "playercounts"),
+                  tibble(word = tm::stopwords("spanish"),
+                                          lexicon = "spanish"),
+                  tibble(word = tm::stopwords("german"),
+                                          lexicon = "german")
+        )
+                  
+                                         
+# tidy_descriptions
+tidy_tokens = active_game_descriptions %>%
+        mutate(description = gsub("[^\u0001-\u007F]+|<U\\+\\w+>","", description)) %>% # remove non ASCII
+        select(game_id, name, description) %>%
+        unnest_tokens(word, description) %>%
+        anti_join(custom_stop_words,
+                  by = "word")
+
+```
+
+This will let us start to do some basic analysis of the words we find in game descriptions. For instance, what are the most frequently used words in games?
+
+```{r most frequent words overall, fig.cap = "Displaying top 25 most frequently used words in game descriptions on boardgamegeek.com. Common stop words (the, and, a) removed from the analysis."}
+
+tidy_tokens %>%
+        count(word, sort=T) %>%
+        rename(count = n) %>%
+        slice_max(order_by = count,
+                  n = 25,
+                  with_ties = F) %>%
+        ggplot(., aes(x=count,
+                      y=reorder(word, count)))+
+        geom_col(width = 0.8)+
+        theme_phil()+
+        my_caption+
+        ylab("")+
+        theme(axis.text.y = element_text(size = 10))+
+        theme(plot.subtitle = element_text(size = 8))
+
+```
+
+Similarly, how many words do we typically get in a game description? What does the distribution look like?
+
+```{r distribution of most words used in descriptions, fig.cap = "Distribution of the word count of board game descriptions after removing common stop words."}
+
+word_counts = tidy_tokens %>%
+        group_by(game_id, word) %>%
+        count() %>%
+        group_by(game_id) %>%
+        summarize(word_count = sum(n),
+                  .groups = 'drop')
+
+word_counts %>%
+        ggplot(., aes(x=word_count))+
+        geom_histogram(bins = 100)+
+        theme_phil()+
+        # ggtitle("How long are game descriptions?",
+        #         subtitle = str_wrap("Distribution of the word count of board game descriptions after removing common stop words.", 89))+
+        geom_vline(xintercept = median(word_counts$word_count),
+                   linetype = 'dashed',
+                   color = 'blue')+
+        annotate("text",
+                 x = 250,
+                 y = 1500,
+                 color = 'blue',
+                 label = paste("median description:",
+                               "\n",
+                               median(word_counts$word_count),
+                               "words"))+
+        annotate("text",
+                 x = max(word_counts$word_count)-100,
+                 y = 300,
+                 label = paste("longest description:",
+                               "\n",
+                               max(word_counts$word_count), "words"),
+                 color = 'red')+
+        my_caption+
+        ylab("number of games")
+
+```
+
+This distribution is pretty right skewed, with some games that have much longer descriptions than the rest. 
+
+## Longest Game Description Prize
+
+Which game has the longest description? **Robinson Crusoe: Escape from Despair Island** takes the prize at a whopping 1123 words (not counting stop words).
+
+Wall of text warning:
+
+```{r longest description}
+
+active_game_descriptions %>%
+        filter(game_id %in% (word_counts %>%arrange(desc(word_count)) %>%
+                                     head(1) %>%
+                                     pull(game_id))) %>%
+        mutate(game_id = as.character(game_id)) %>%
+        select(game_id, name, description) %>%
+        flextable() %>%
+        autofit() %>%
+        border_inner_h()
+
+```
+
+Oof. That is a doozy. It looks like this isn't *the* Robinson Crusoe, but a recent Kickstarter card game that more or less included its entire rules explanation as well as quotes from prominent reviewers in its description.
+
+## Description Length by Category
+
+I wonder if different types of games have different description lengths, on average? (Note: I did go down a rabbit hole looking at the difference between Kickstarters and non Kickstarter games in word length. Kickstarter games do tend to have slightly longer descriptions, but nothing that interesting emerged.)
+
+```{r description length by category, fig.cap = "Distribution of game description word counts by game category"}
+
+p = 
+word_counts %>%
+        left_join(., 
+                  game_categories %>%
+                gather("variable",
+                       "value",
+                       -game_id) %>%
+                filter(value ==1) %>%
+                filter(variable %in% c("category_card_game",
+                                       "category_wargame",
+                                       "category_fantasy",
+                                       "category_party_game",
+                                       "category_dice",
+                                       "category_science_fiction",
+                                       "category_fighting",
+                                       "category_abstract_strategy",
+                                       "category_economic")),
+                by = "game_id") %>%
+        mutate(variable = case_when(is.na(value) ~ 'category_other',
+                                    TRUE ~ variable)) %>%
+        mutate(variable = tidy_name_func(variable)) %>%
+        group_by(variable) %>%
+        mutate(median = median(word_count))  %>%
+        ggplot(., aes(x=word_count,
+                      fill = variable,
+                      y = reorder(variable, median)))+
+         stat_density_ridges(quantile_lines = TRUE, 
+                            quantiles = 2, 
+                            color = 'white')+
+        theme_phil()+
+        theme(legend.position = "none")+
+        ylab("category")+
+        xlab("game description word count")+
+        coord_cartesian(xlim = c(0, 500))
+
+suppressMessages({
+        print(p)
+})
+        
+```
+
+Looks like wargames tend to have the longest descriptions and party games have the shortest. 
+
+## Description Length and Complexity
+
+I wonder if there's a relationship between the word count and the BGG average complexity weight? We'll plot the number of words in the description against the complexity rating. I also usually like to size by the number of user ratings when displaying a BGG rating, as some games will have very few users rating them.
+
+```{r word count and description}
+
+set.seed(1)
+word_counts %>%
+        left_join(., active_games,
+                  by = "game_id") %>%
+        mutate(averageweight = case_when(averageweight == 0 ~ 1,
+                                         TRUE ~ averageweight)) %>%
+        ggplot(., aes(x=word_count,
+                      label = name,
+                      y=averageweight))+
+        geom_jitter(aes(size =usersrated),
+                    alpha = 0.25)+
+        geom_text(check_overlap = T,
+                  vjust = -1,
+                  size = 2.5)+
+        theme_phil()+
+        theme(legend.title = element_text())+
+        guides(size = guide_legend(title.position = 'top'))+
+        geom_smooth(method = 'lm',
+                    alpha = 0.8,
+                    formula = 'y ~ x')+
+        stat_cor(p.accuracy = 0.01,
+                 col = 'blue',
+                 label.x = 900,
+                 label.y = 4.5)+
+        xlab("game description word count")
+
+```
+
+We do see a bit of a relationship: the length of a game's description explains about 11% of the variation in the complexity rating of the game. The relationship looks to be slightly nonlinear though, with some games at the tails of the distribution on description length that are actually fairly low in complexity.
+
+# Word Frequencies by Category
+
+So far we've just summarized the total number of words, next we can look at the frequencies of specific words within categories
+
+## Word Cloud by Category
+
+We'll make a word cloud for this, because everyone loves word clouds! This will highlight a bit of an issue, though.
+
+```{r most frequent words by game type, warning=F, message=F, fig.cap = "Most frequent words within specific categories of games on boardgamegeek"}
+
+library(ggwordcloud)
+
+game_categories %>%
+        gather("variable",
+               "value",
+               -game_id) %>%
+        filter(value ==1) %>%
+        filter(variable %in% c("category_card_game",
+                               "category_wargame",
+                               "category_fantasy",
+                               "category_party_game",
+                               "category_dice",
+                               "category_science_fiction",
+                               "category_fighting",
+                               "category_abstract_strategy",
+                               "category_economic")) %>%
+        select(game_id, variable) %>%
+        left_join(., 
+                  tidy_tokens,
+                  by = "game_id") %>%
+        group_by(variable) %>%
+        count(word, sort=T) %>%
+        rename(count = n) %>%
+        slice_max(order_by = count,
+                  n=50,
+                  with_ties = F) %>%
+        mutate(tidy_variable = tidy_name_func(variable)) %>%
+        mutate(tidy_variable = factor(tidy_variable,
+                                      levels = c("Card Game",
+                                                 "Wargame",
+                                                 "Fantasy",
+                                                 "Party Game",
+                                                 "Dice",
+                                                 "Science Fiction",
+                                                 "Fighting",
+                                                 "Abstract Strategy",
+                                                 "Economic"))) %>%
+        ggplot(., aes(label = word,
+                      color = tidy_variable,
+                      size = count))+
+        geom_text_wordcloud_area(area_corr_power = 0.6,
+                                 rm_outside=T)+
+        scale_size_area(max_size = 8) +
+        facet_wrap(tidy_variable ~.,
+                   scales="free",
+                   ncol = 3)+
+        theme_void()
+ #       scale_radius(range = c(0, 8), limits = c(0, NA))
+
+
+
+
+        # ggplot(., aes(x=count,
+        #               fill = tidy_variable,
+        #               y=reorder_within(word, count, tidy_variable)))+
+        # geom_col(width = 0.8)+
+        # facet_wrap(tidy_variable ~.,
+        #            scales="free_y",
+        #            ncol = 3)+
+        # scale_y_reordered()+
+        # theme_phil()+
+        # guides(fill = "none")+
+        # theme(axis.text.y = element_text(size = 10))+
+        # ylab("")
+                  
+                  
+```
+
+The problem is we tend to find the same types of words in pretty much every category. A few words show up that are unique to each ("army" and "combat" appear in Wargames and Fighting games; "heroes" and "dungeons" show up in Fantasy), but what we'd really like to know is, what are the words that are most distinct to each category?
+
+## tf-idf
+
+What words appear frequently in science fiction games that don't appear frequently in fantasy games? For these types of questions we can compute the *term-frequency inverse document frequency*. This indicates words that are used frequently within a category while not being used frequently within all of the categories.
+
+```{r tf idf for category, fig.height=8, fig.width=8, fig.cap = "Displaying top 15 words for each category based on term frequency inverse document frequency (tf-idf)."}
+
+category_tf_idf = game_categories %>%
+        gather("variable",
+               "value",
+               -game_id) %>%
+        filter(value ==1) %>%
+        filter(variable %in% c("category_card_game",
+                               "category_wargame",
+                               "category_fantasy",
+                               "category_party_game",
+                               "category_dice",
+                               "category_science_fiction",
+                               "category_fighting",
+                               "category_abstract_strategy",
+                               "category_economic")) %>%
+        select(game_id, variable) %>%
+        left_join(., 
+                  tidy_tokens,
+                  by = "game_id") %>%
+        mutate(category = tidy_name_func(variable)) %>%
+        group_by(category) %>%
+        count(word, sort=T) %>%
+        bind_tf_idf(word, category, n) 
+
+category_tf_idf %>%
+        group_by(category) %>%
+        slice_max(tf_idf, n = 15) %>%
+        ungroup() %>%
+        mutate(category = factor(category,
+                                      levels = c("Card Game",
+                                                 "Wargame",
+                                                 "Fantasy",
+                                                 "Party Game",
+                                                 "Dice",
+                                                 "Science Fiction",
+                                                 "Fighting",
+                                                 "Abstract Strategy",
+                                                 "Economic"))) %>%
+        ggplot(aes(tf_idf, 
+                   reorder_within(word, tf_idf, category), fill = category)) +
+        geom_col(show.legend = FALSE) +
+        facet_wrap(~category, ncol = 3, scales = "free") +
+        labs(x = "tf-idf", y = NULL)+
+        scale_y_reordered()+
+        theme_phil()+
+        theme(axis.text.y = element_text(size=10))+
+        my_caption
+
+
+```
+
+# N-Grams and Word Pairings
+
+What are the most frequent word pairings that show up in game descriptions?
+
+```{r create tokens at the bigram level, warning=F, message=F}
+
+tidy_bigrams = active_game_descriptions %>%
+        mutate(description = gsub("[^\u0001-\u007F]+|<U\\+\\w+>","", description)) %>% # remove non ASCII
+        select(game_id, name, description) %>%
+        unnest_tokens(bigram, description, token = "ngrams", n = 2) %>%
+        separate(bigram, c("word1", "word2"), sep = " ") %>%
+        filter(!word1 %in% stop_words$word) %>%
+        filter(!word2 %in% stop_words$word) %>%
+        filter(!word1 %in% custom_stop_words$word) %>%
+        filter(!word2 %in% custom_stop_words$word)
+                
+# new bigram counts:
+bigram_counts <- tidy_bigrams %>% 
+  count(word1, word2, sort = TRUE)
+
+# plot bigrams
+bigram_counts %>%
+        head(50) %>%
+        tidyr::unite(bigram, word1, word2, sep = " ") %>%
+        ggplot(., aes(x=n,
+                      y = reorder(bigram, n)))+
+        geom_col(width=0.8)+
+        theme_phil()+
+        ylab("bigram")
+        
+```
+
+
+## Word Pairings Network
+
+Another way to investigate word pairings is to create a network of the most frequent word pairings.
+
+```{r network of bigrams, fig.height=12, fig.width=15}
+
+# specify grid type
+a <- grid::arrow(type = "closed", 
+                 length = unit(.15, "inches"))
+
+# dataset reduced to words that commonly appear
+bigram_graph = bigram_counts %>%
+               filter(n > 65) %>%
+        graph_from_data_frame()
+        
+set.seed(2020)
+ggraph(bigram_graph,
+       layout = "fr") +
+        geom_edge_link(aes(edge_alpha = n), 
+                       show.legend = FALSE,
+                 arrow = a, end_cap = circle(.05, 'inches')) +
+        geom_node_point(color = "lightblue", size = 2) +
+        geom_node_text(aes(label = name),size=3, vjust = 1, hjust = 1) +
+        theme_void()+
+        theme(plot.title = element_text(hjust = 0.5),
+              plot.subtitle = element_text(hjust = 0.5),
+              plot.caption = element_text(hjust = 0.5))+
+        ggtitle("Network of most frequent word pairings in board game descriptions",
+                subtitle = paste("Displaying most frequent words from boardgamegeek game descriptions after removing stop words",
+                                 "\n",
+                                 "Arrow direction indicates order in which words appear together"))+
+        my_caption
+
+```
+
+# Correlations Between Words
+
+We can examine the degree of correlation for all word pairings, meaning how frequently they appear next to each other compared to how frequently they are separate. We'll filter to include only words that frequently appear (greater than 200 times) in descriptions, then filter to only those above a specific level of correlation.
+
+```{r get correlations between words}
+
+word_cors <- tidy_tokens %>%
+        group_by(word) %>%
+        mutate(count = n()) %>%
+        filter(count > 200) %>%
+        pairwise_cor(word, game_id, sort = TRUE)
+```
+
+We can make a network of word correlations, somewhat similar to the network plot shown above, but this time with no emphasis on direction.
+
+```{r show network of correlation, fig.height=12, fig.width=15, warning=F, message=F}
+
+set.seed(1999)
+word_cors %>%
+  filter(correlation > .15) %>%
+  graph_from_data_frame() %>%
+  ggraph(layout = "fr") +
+  geom_edge_link(aes(edge_alpha = correlation), show.legend = FALSE) +
+  geom_node_point(color = "lightblue", size = 2, alpha = 0.6) +
+        geom_node_text(aes(label = name), size = 3,
+                       vjust = - 1,
+                       repel = F) +
+  theme_void()+
+        theme(plot.title = element_text(hjust = 0.5),
+              plot.subtitle = element_text(hjust = 0.5),
+              plot.caption = element_text(hjust = 0.5))+
+ggtitle("Network of correlated word parirings in board game descriptions",
+                subtitle = paste("Displaying frequently occuring words with highest pairwise correlation in boardgamegeek game descriptions after removing stop words",
+                                 "\n",
+                                 "Line thickness indicates level of correlation between words"))+
+        my_caption
+
+```
+
+## Individual Words
+
+We can similarly look at the network for specific words. What is correlated with 'worker'?
+
+```{r examine specific words, fig.height=6, fig.width=8}
+
+word_cors %>%
+        filter(item1=='worker') %>%
+        filter(correlation > .05) %>%
+  graph_from_data_frame() %>%
+  ggraph(layout = "fr") +
+  geom_edge_link(aes(edge_alpha = correlation), show.legend = FALSE) +
+  geom_node_point(color = "lightblue", size = 3, alpha = 0.6) +
+  geom_node_text(aes(label = name), repel = TRUE) +
+  theme_void()+
+        my_caption
+
+```
+
+What about 'hero'?
+
+```{r examine specific words 2, fig.height=6, fig.width=8}
+
+word_cors %>%
+        filter(item1=='hero') %>%
+        filter(correlation > .05) %>%
+  graph_from_data_frame() %>%
+  ggraph(layout = "fr") +
+  geom_edge_link(aes(edge_alpha = correlation), show.legend = FALSE) +
+  geom_node_point(color = "lightblue", size = 3, alpha = 0.6) +
+  geom_node_text(aes(label = name), repel = TRUE) +
+  theme_void()+
+        my_caption
+
+
+```
+
+What about railroad?
+
+```{r examine specific words 3, fig.height=6, fig.width=8}
+
+word_cors %>%
+        filter(item1=='railroad') %>%
+        filter(correlation > .05) %>%
+  graph_from_data_frame() %>%
+  ggraph(layout = "fr") +
+  geom_edge_link(aes(edge_alpha = correlation), show.legend = FALSE) +
+  geom_node_point(color = "lightblue", size = 3, alpha = 0.6) +
+  geom_node_text(aes(label = name), repel = TRUE) +
+  theme_void()+
+        my_caption
+
+```
+
+## Publisher/Designer Specific Word Networks
+
+We can also look at games that come from specific publishers and examine their network of words.
+
+### Fantasy Flight
+
+```{r get correlation for publisher 1, fig.height=8, fig.width=10, warning=F, message=F}
+
+word_cors_publisher <- tidy_tokens %>%
+                filter(game_id %in% (game_types %>% 
+                                     filter(type == 'publisher') %>% 
+                                     filter(value == 'Fantasy Flight Games') %>% 
+                                     pull(game_id))) %>%
+        group_by(word) %>%
+        mutate(count = n()) %>%
+        filter(count > 50) %>%
+        pairwise_cor(word, game_id, sort = TRUE)
+
+set.seed(1999)
+word_cors_publisher %>%
+  filter(correlation > .1) %>%
+  graph_from_data_frame() %>%
+  ggraph(layout = "fr") +
+  geom_edge_link(aes(edge_alpha = correlation), show.legend = FALSE) +
+  geom_node_point(color = "lightblue", size = 2, alpha = 0.6) +
+  geom_node_text(aes(label = name), size = 3, repel = TRUE) +
+  theme_void()+
+        theme(plot.title = element_text(hjust = 0.5),
+              plot.subtitle = element_text(hjust = 0.5),
+              plot.caption = element_text(hjust = 0.5))+
+        ggtitle("Network of correlated word parirings for Fantasy Flight Games",
+                subtitle = paste("Displaying words with highest pairwise correlation in boardgamegeek game descriptions after removing stop words",
+                                 "\n",
+                                 "Line thickness indicates level of correlation between words"))+
+        my_caption
+
+```
+
+### GMT Games
+
+```{r get correlation for publisher 2, fig.height=8, fig.width=10, warning=F, message=F}
+
+word_cors_publisher <- tidy_tokens %>%
+                filter(game_id %in% (game_types %>% 
+                                     filter(type == 'publisher') %>% 
+                                     filter(value == 'GMT Games') %>% 
+                                     pull(game_id))) %>%
+        group_by(word) %>%
+        mutate(count = n()) %>%
+        filter(count > 50) %>%
+        pairwise_cor(word, game_id, sort = TRUE)
+
+set.seed(1999)
+word_cors_publisher %>%
+  filter(correlation > .2) %>%
+  graph_from_data_frame() %>%
+  ggraph(layout = "fr") +
+  geom_edge_link(aes(edge_alpha = correlation), show.legend = FALSE) +
+  geom_node_point(color = "lightblue", size = 2, alpha = 0.6) +
+  geom_node_text(aes(label = name), size = 3, repel = TRUE) +
+  theme_void()+
+        theme(plot.title = element_text(hjust = 0.5),
+              plot.subtitle = element_text(hjust = 0.5),
+              plot.caption = element_text(hjust = 0.5))+
+        ggtitle("Network of correlated word parirings for GMT Games",
+                subtitle = paste("Displaying words with highest pairwise correlation in boardgamegeek game descriptions after removing stop words",
+                                 "\n",
+                                 "Line thickness indicates level of correlation between words"))+
+        my_caption
+
+```
+
+### Rio Grande
+
+```{r get correlation for publisher 3, fig.height=8, fig.width=10, warning=F, message=F}
+
+word_cors_publisher <- tidy_tokens %>%
+                filter(game_id %in% (game_types %>% 
+                                     filter(type == 'publisher') %>% 
+                                     filter(value == 'Rio Grande Games') %>% 
+                                     pull(game_id))) %>%
+        group_by(word) %>%
+        mutate(count = n()) %>%
+        filter(count > 50) %>%
+        pairwise_cor(word, game_id, sort = TRUE)
+
+set.seed(1999)
+word_cors_publisher %>%
+  filter(correlation > .15) %>%
+  graph_from_data_frame() %>%
+  ggraph(layout = "fr") +
+  geom_edge_link(aes(edge_alpha = correlation), show.legend = FALSE) +
+  geom_node_point(color = "lightblue", size = 2, alpha = 0.6) +
+  geom_node_text(aes(label = name), size = 3, repel = TRUE) +
+  theme_void()+
+        theme(plot.title = element_text(hjust = 0.5),
+              plot.subtitle = element_text(hjust = 0.5),
+              plot.caption = element_text(hjust = 0.5))+
+        ggtitle("Network of correlated word parirings for Rio Grande Games",
+                subtitle = paste("Displaying words with highest pairwise correlation in boardgamegeek game descriptions after removing stop words",
+                                 "\n",
+                                 "Line thickness indicates level of correlation between words"))+
+        my_caption
+
+```
+
+### Reiner Knizia
+
+```{r get correlation for designer 1, fig.height=8, fig.width=10, warning=F, message=F}
+
+word_cors_publisher <- tidy_tokens %>%
+                filter(game_id %in% (game_types %>% 
+                                     filter(type == 'designer') %>% 
+                                     filter(value == 'Reiner Knizia') %>% 
+                                     pull(game_id))) %>%
+        group_by(word) %>%
+        mutate(count = n()) %>%
+        filter(count > 30) %>%
+        pairwise_cor(word, game_id, sort = TRUE)
+
+set.seed(1999)
+word_cors_publisher %>%
+  filter(correlation > .15) %>%
+  graph_from_data_frame() %>%
+  ggraph(layout = "fr") +
+  geom_edge_link(aes(edge_alpha = correlation), show.legend = FALSE) +
+  geom_node_point(color = "lightblue", size = 2, alpha = 0.6) +
+  geom_node_text(aes(label = name), size = 3, repel = TRUE) +
+  theme_void()+
+        theme(plot.title = element_text(hjust = 0.5),
+              plot.subtitle = element_text(hjust = 0.5),
+              plot.caption = element_text(hjust = 0.5))+
+        ggtitle("Network of correlated word parirings for Reiner Knizia Games",
+                subtitle = paste("Displaying words with highest pairwise correlation in boardgamegeek game descriptions after removing stop words",
+                                 "\n",
+                                 "Line thickness indicates level of correlation between words"))+
+        my_caption
+
+```
+
+### Uwe Rosenberg
+
+```{r get correlation for designer 2, fig.height=8, fig.width=10, warning=F, message=F}
+
+word_cors_publisher <- tidy_tokens %>%
+                filter(game_id %in% (game_types %>% 
+                                     filter(type == 'designer') %>% 
+                                     filter(value == 'Uwe Rosenberg') %>% 
+                                     pull(game_id))) %>%
+        group_by(word) %>%
+        mutate(count = n()) %>%
+        filter(count > 15) %>%
+        pairwise_cor(word, game_id, sort = TRUE)
+
+set.seed(1999)
+word_cors_publisher %>%
+        filter(correlation > .15) %>% 
+        graph_from_data_frame() %>%
+  ggraph(layout = "fr") +
+  geom_edge_link(aes(edge_alpha = correlation), show.legend = FALSE) +
+  geom_node_point(color = "lightblue", size = 2, alpha = 0.6) +
+  geom_node_text(aes(label = name), size = 3, repel = TRUE) +
+  theme_void()+
+        theme(plot.title = element_text(hjust = 0.5),
+              plot.subtitle = element_text(hjust = 0.5),
+              plot.caption = element_text(hjust = 0.5))+
+        ggtitle("Network of correlated word parirings for Uwe Rosenberg Games",
+                subtitle = paste("Displaying words with highest pairwise correlation in boardgamegeek game descriptions after removing stop words",
+                                 "\n",
+                                 "Line thickness indicates level of correlation between words"))+
+        my_caption
+
+```
+
+### Corey Konieczka
+
+```{r get correlation for designer 3, fig.height=8, fig.width=10, warning=F, message=F}
+
+word_cors_publisher <- tidy_tokens %>%
+                filter(game_id %in% (game_types %>% 
+                                     filter(type == 'designer') %>% 
+                                     filter(value == 'Corey Konieczka') %>% 
+                                     pull(game_id))) %>%
+        group_by(word) %>%
+        mutate(count = n()) %>%
+        filter(count > 10) %>%
+        pairwise_cor(word, game_id, sort = TRUE)
+
+set.seed(1999)
+word_cors_publisher %>%
+        filter(correlation > .15) %>% 
+        graph_from_data_frame() %>%
+  ggraph(layout = "fr") +
+  geom_edge_link(aes(edge_alpha = correlation), show.legend = FALSE) +
+  geom_node_point(color = "lightblue", size = 2, alpha = 0.6) +
+  geom_node_text(aes(label = name), size = 3, repel = TRUE) +
+  theme_void()+
+        theme(plot.title = element_text(hjust = 0.5),
+              plot.subtitle = element_text(hjust = 0.5),
+              plot.caption = element_text(hjust = 0.5))+
+        ggtitle("Network of common word parirings for Corey Konieczka",
+                subtitle = paste("Displaying words with highest pairwise correlation in boardgamegeek game descriptions after removing stop words",
+                                 "\n",
+                                 "Line thickness indicates level of correlation between words"))+
+        my_caption
+
+```
+
