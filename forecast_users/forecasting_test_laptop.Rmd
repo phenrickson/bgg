@@ -75,7 +75,8 @@ bigquerycon<-dbConnect(
 
 # query table of game info
 active_games<-DBI::dbGetQuery(bigquerycon, 
-                              'SELECT * FROM bgg.api_game_info') %>%
+                              'SELECT * FROM bgg.api_game_info
+                              where timestamp = (SELECT MAX(timestamp) as most_recent FROM bgg.api_game_info)') %>%
         select(-starts_with("rank"))
 
 # create caption for plots
@@ -91,10 +92,6 @@ game_types= DBI::dbGetQuery(bigquerycon,
 
 # get previously loaded features to keep
 load(here::here("local/types_selected.Rdata"))
-
-```
-
-```{r pivot categories}
 
 # function for pivoting and making dummy variables
 pivot_and_dummy_types = function(input_data, input_type) {
@@ -114,7 +111,6 @@ pivot_and_dummy_types = function(input_data, input_type) {
                             names_sep = "_",
                             values_fn = min,
                             values_fill = 0)
-        
 }
 
 # categories
@@ -161,7 +157,8 @@ game_artists = pivot_and_dummy_types(game_types,
 
 ```{r combine these together in one larger table}
 
-games_full = active_games %>%
+# combine into one dataset at the game level
+games_model = active_games %>%
         left_join(., game_mechanics,
                   by = c("game_id")) %>%
         left_join(., game_families,
@@ -174,15 +171,7 @@ games_full = active_games %>%
                   by = c("game_id")) %>%
         left_join(., game_artists,
                   by = c("game_id")) %>%
-        filter(yearpublished != 0) %>%
-        # mutate_at(c("yearpublished",
-        #             "averageweight", 
-        #             "playingtime",
-        #             "minage"),
-        #       .funs = ~ na_if(., 0)) %>%
-        mutate(dataset = case_when(yearpublished <= params$end_training_year ~ 'train',
-                                   yearpublished == params$end_training_year+1 ~ 'validation',
-                                   TRUE ~ 'test'))
+        filter(yearpublished != 0)
 
 # discard what you dont need!
 rm(game_types,
@@ -211,7 +200,7 @@ We need to convert our historical table into a time series dataset. It turns out
 ```{r store locally}
 
 # # save a copy to local
-# readr::write_rds(games_ts, file = paste(here::here("local/", paste("games_ts_", Sys.Date(), ".Rdata", sep=""))))
+#readr::write_rds(games_ts, file = paste(here::here("local/", paste("games_ts_", Sys.Date(), ".Rdata", sep=""))))
 
 # read local copy
 games_ts_files = grep("games_ts", list.files(here::here("local/")), value =T)
@@ -260,7 +249,7 @@ games_tsibble %>%
         ungroup() %>%
         index_by(date) %>%
         summarize(number_games = n_distinct(game_id),
-               number_ratings = sum(users_rated),
+           #    number_ratings = sum(users_rated),
                mean_bgg_average = mean(bgg_average, na.rm=T)) %>%
         gather("variable", "value", -date) %>%
         ggplot(., aes(x=date,
@@ -268,7 +257,7 @@ games_tsibble %>%
         geom_line()+
         facet_wrap(variable ~.,
                    scales = "free_y",
-                   ncol = 1)+
+                   ncol = 2)+
         theme_bw()
         
 ```
@@ -281,7 +270,7 @@ In a perfect world, we would have the full data on every game from the moment it
 
 To focus on forecasting brand new games, I want to start by looking at all games that appear for the first time in the data we have, allowing us to track them from the time they show up to present. Now, it's important to note that this won't be limited to only games that were published after 2016. The historical data we have only starts to track a game once it accumulates 30 user ratings. 
 
-We start tracking some games *well* after they first were released, such as Knucklebones, which entered the dataset in 2021 but is listed as coming out in 3000 BC.
+We start tracking some games *well* after they first were released, such as Knucklebones, which entered the dataset in 2021 but is listed as coming out in 3000 BC. We also have a number of games that are listed as being published in year 0, which indicates the record is missing on BGG.
 
 ```{r find games and release dates, warning=F, message=F}
 
@@ -402,7 +391,7 @@ games_release = games_release %>%
 
 ```
 
-Once a game enters the dataset, however, we can plot the trajectory of each game on user ratings, average rating, geek rating, and bgg rank.
+Once a game enters the dataset, however, we can plot its trajectory on user ratings, average rating, geek rating, and bgg rank.
 
 ```{r plot trajectories of games that started, warning=F, fig.height=6, fig.width=10}
 
@@ -436,131 +425,15 @@ games_release %>%
                   aes(x=days_since_release,
                       y= mean),
                   color = 'red',
-                  size = 2)
+                  size = 2)+
+        ggtitle("Visualizing the Trajectory of Board Game Releases",
+                subtitle = str_wrap("Displaying a sample of 1000 board games and their trajectories on each of the selected metrics. Each black line shows one game while the red line shows the average across the sample", 125))
         
 ```
 
 # Forecasting
 
-Our goal is to forecast the trajectory of each game, focusing particularly on user ratings.
-
-```{r query tables with game information}
-
-# general game info
-games_info<-DBI::dbGetQuery(bigquerycon, 
-                              'SELECT * FROM bgg.active_games_info')
-
-# game categories
-game_categories<-DBI::dbGetQuery(bigquerycon, 
-                              'SELECT 
-                              a.game_id,
-                              b.category_id,
-                              b.category
-                              FROM bgg.game_categories a
-                               LEFT JOIN bgg.category_ids b 
-                               ON a.category_id = b.category_id')
-
-# game mechanics
-game_mechanics<-DBI::dbGetQuery(bigquerycon, 
-                              'SELECT 
-                              a.game_id,
-                              b.mechanic_id,
-                              b.mechanic
-                              FROM bgg.game_mechanics a
-                               LEFT JOIN bgg.mechanic_ids b 
-                               ON a.mechanic_id = b.mechanic_id')
-
-# game publishers
-game_publishers<-DBI::dbGetQuery(bigquerycon, 
-                              'SELECT 
-                              a.game_id,
-                              b.publisher_id,
-                              b.publisher
-                              FROM bgg.game_publishers a
-                               LEFT JOIN bgg.publisher_ids b 
-                               ON a.publisher_id = b.publisher_id')
-
-# game designers
-game_designers<-DBI::dbGetQuery(bigquerycon, 
-                              'SELECT 
-                              a.game_id,
-                              b.designer_id,
-                              b.designer
-                              FROM bgg.game_designers a
-                               LEFT JOIN bgg.designer_ids b 
-                               ON a.designer_id = b.designer_id')
-
-# game artists
-game_artists<-DBI::dbGetQuery(bigquerycon, 
-                              'SELECT 
-                              a.game_id,
-                              b.artist_id,
-                              b.artist
-                              FROM bgg.game_artists a
-                               LEFT JOIN bgg.artist_ids b 
-                               ON a.artist_id = b.artist_id')
-
-# function for creating training and test sets
-source(here::here("functions/combine_and_split_bgg_datasets.R"))
-
-# publisher list
-publisher_list = 
-        readr::read_rds(here::here("active/publisher_list.Rdata"))
-
-# top designers and artists
-min_games = 15
-
-# rank designers with min games
-top_designers = active_games %>%
-  filter(yearpublished < 2020) %>%
-  left_join(., game_designers,
-            by = "game_id") %>%
-  select(timestamp, game_id, name, designer_id, designer, everything()) %>%
-  filter(!is.na(designer)) %>%
-  #filter(designer_id %in% top_designers$designer_id) %>%
-  group_by(designer_id, designer) %>%
-  summarize(median_rating = median(baverage),
-         n_games = n_distinct(game_id),
-         .groups = 'drop') %>%
-        filter(n_games > min_games) %>%
-        arrange(desc(median_rating)) %>%
-        mutate(rank = row_number())
-
-# top artists
-top_artists = active_games %>%
-  filter(yearpublished < 2020) %>%
-  left_join(., game_artists,
-            by = "game_id") %>%
-  select(timestamp, game_id, name, artist_id, artist, everything()) %>%
-  filter(!is.na(artist)) %>%
-  #filter(artist_id %in% top_artists$artist_id) %>%
-  group_by(artist_id, artist) %>%
-  summarize(median_rating = median(baverage),
-         n_games = n_distinct(game_id),
-         .groups = 'drop') %>%
-        filter(n_games > min_games) %>%
-        arrange(desc(median_rating)) %>%
-        mutate(rank = row_number())
-
-games_datasets= combine_and_split_bgg_datasets(datasets_list = list("active_games" = active_games,
-"game_categories" = game_categories,
-                                        "game_designers" = game_designers,
-                                        "game_mechanics" = game_mechanics,
-                                        "game_publishers" = game_publishers,
-                                        "game_artists" = game_artists),
-                        min_users = 200,
-                        year_split = 2020,
-                        publisher_list = publisher_list,
-                        top_designers = top_designers,
-                        top_artists = top_artists)
-
-# use the training set
-games_train = games_datasets$train 
-games_test = games_datasets$test
-
-rm(games_datasets)
-
-```
+Our goal is to forecast the trajectory of new games. We'd like to be able to forecast how many user ratings a game will have at specified times (ie, one year from the day it entered the dataset) as well as forecast with specific horizons (ie, 90 days from the most recent observation. To achieve this, we will assmble our dataset with the aim of training models on games released before 2019, using games released in 2019 and 2020 as our main validation set.
 
 ```{r rm a lot of excess things, warning=F, message=F}
 
@@ -583,13 +456,9 @@ rm(games_release_new,
 ```
 
 
-# Assemble and Prepare Data 
-
-We'll assemble our training dataset to start, meaning we will start with games published before 2020 and then pull in the other datasets to create features at the game level.
-
 ## Setting Up and Splitting Data
 
-Let's create a dataset with only games that were released during this time period. We'll then split our data into a training and validation set based on both time (looking at games released before 2020) as well as the amount of data we have on them (days since they entered the dataset).. We'll then create a recipe to determine the key features of games we aim to use in forecasting. 
+Let's create a dataset with only games that were released during this time period. We'll then split our data into a training and validation set based on both time (looking at games released before 2020) as well as the amount of data we have on them (days since they entered the dataset). We'll then create a recipe to determine the key features of games we aim to use in forecasting. 
 
 ```{r update dataset}
 
@@ -618,68 +487,66 @@ games_release_full<-games_release %>%
         select(date, start_date, days_since_release, game_id, yearpublished, game_id, name, bgg_rank, bayes_average, bgg_average, users_rated) %>%
         filter(!is.na(yearpublished)) %>%
         left_join(., active_games %>% 
-                          select(-baverage,
-                                 -average,
-                                 -rank,
-                                 -stddev,
-                                 -type,
-                                 -usersrated,
-                                 -numtrading,
-                                 -numwanting,
-                                 -numwishing,
-                                 -numcomments,
-                                 -timestamp),
+                          select(game_id,
+                                 name, 
+                                 yearpublished,
+                                 minage,
+                                 minplayers, 
+                                 maxplayers,
+                                 playingtime,
+                                 minplaytime,
+                                 maxplaytime),
                   by = c("game_id", "name", "yearpublished")) %>%
         group_by(game_id) %>%
-        mutate(game_horizon_max = max(days_since_release))
+        mutate(game_horizon_max = max(days_since_release)) %>%
+        mutate(minplayers = case_when(minplayers < 1 ~ 1,
+                                                     minplayers > 10 ~ 10, # truncate
+                                                     TRUE ~ minplayers),
+               maxplayers = case_when(maxplayers < 1 ~ minplayers,
+                                                     maxplayers > 20 ~ 20,
+                                                     TRUE ~ maxplayers)) %>%
+        mutate(time_per_player = playingtime/ maxplayers) %>% # make time per player variable
+        mutate(playingtime = log1p(playingtime),
+               time_per_player = log1p(time_per_player)) %>%
+        mutate(month = lubridate::month(date, label=T),
+               day = lubridate::wday(date, label=T)) %>%
+        mutate(users_rated = log(users_rated)) 
 
-# add in info from active table, such as player info, etc
-
-        # filter(yearpublished > 2015) %>%
-        # mutate(days_since_start = as.numeric(date - start_date),
-        #        days_since_release = as.numeric(date - release_date),
-        #        days_diff_start_release = as.numeric(start_date - release_date))
-
-# training set with mechanic, category features
-games_release_train = games_release_full %>%
-        filter(date < end_train_date) %>%
-        filter(game_horizon_max >=720) %>%
-        left_join(., games_train %>%
-                          select(game_id,
-                                 starts_with("mech_"),
-                                 starts_with("cat_")),
-                                 # starts_with("pub_"),
-                                 # starts_with("des_"),
-                                 # starts_with("art_")),
-                  by = c("game_id")) %>%
-        filter(cat_collectible_components !=1 &
-                       cat_expansion_for_basegame != 1) %>%
-        mutate_at(vars(starts_with("mech_")),
-                  ~ replace_na(., 0)) %>%
-        mutate_at(vars(starts_with("cat_")),
-                  ~ replace_na(., 0))
-
-# remove specific categories that count expansions
-rm(games_release, games_tsibble)
-gc()
+rm(games_release,
+   games_tsibble)
 
 ```
 
-How many games do we have from each year in our traiing set?
+How many games do we have that have reached each forecasting horizon?
 
-```{r check releases}
+```{r how many games released, warning=F, message=F, fig.height=8, fig.width=10}
 
-games_release_train %>%
-        group_by(yearpublished) %>%
-        summarize(games = n_distinct(game_id))
+library(patchwork)
 
-```
+# barchart
+p1 = games_release_full %>%
+        as_tibble() %>%
+        group_by(days_since_release, yearpublished) %>%
+        summarize(games = n_distinct(game_id),
+                  .groups = 'drop') %>%
+        ggplot(., aes(x=days_since_release, 
+                      fill = as.character(yearpublished),
+                y= games))+
+        geom_col()+
+        theme_phil()+
+        theme(legend.title = element_text(),
+              legend.text = element_text())+
+        ggtitle("Tracking Games Since Released")+
+        geom_vline(xintercept = c(30, 90, 180, 365, 720),
+                   linetype = 'dashed',
+                   col = 'grey40')+
+        scale_fill_viridis_d()+
+        theme(legend.position = 'top') +
+        guides(fill = guide_legend(title = "Published",
+                                    title.position = 'top'))
 
-How many games do we have that reached each forecasting horizon?
-
-```{r count by fpreastomg jprozpms}
-
-games_release_train %>%
+# lines
+p2 = games_release_full %>%
         as_tibble() %>%
         group_by(days_since_release, yearpublished) %>%
         summarize(games = n_distinct(game_id),
@@ -691,14 +558,55 @@ games_release_train %>%
         theme_phil()+
         theme(legend.title = element_text(),
               legend.text = element_text())+
-        ggtitle("Training Set")+
         geom_vline(xintercept = c(30, 90, 180, 365, 720),
                    linetype = 'dashed',
                    col = 'grey40')+
         scale_color_viridis_d()+
-        theme(legend.position = 'right') +
-        guides(color = guide_legend(title = "Published",
-                                    title.position = 'top'))
+        theme(legend.position = 'none') 
+
+p1 / p2
+```
+
+For our training set, we will use games published before before 2019. We'll use games published in 2019 and 2020 as our validation set.
+
+```{r create and siaply training set.}
+
+# check balance
+unbalanced_ids = games_release_full %>%
+        as_tibble() %>%
+        filter(yearpublished < 2019) %>%
+        filter(game_horizon_max >=720) %>%
+        filter(days_since_release <=720) %>%
+        group_by(game_id) %>%
+        count() %>%
+        filter(n!=721)
+
+# training set
+games_release_train = games_release_full %>%
+        as_tibble() %>%
+        filter(yearpublished < 2019) %>%
+        filter(game_horizon_max >=720) %>%
+        filter(days_since_release <=720) %>%
+        filter(!(game_id %in% unbalanced_ids))
+
+# validation
+games_release_validation = games_release_full %>%
+        as_tibble() %>%
+        filter(yearpublished == 2019 | 
+                       yearpublished == 2020) %>%
+        filter(game_horizon_max >=720) %>%
+        filter(days_since_release <=720) %>%
+        filter(!(game_id %in% unbalanced_ids))
+
+```
+
+How many games do we have from each year in our training set?
+
+```{r check releases}
+
+games_release_train %>%
+        group_by(yearpublished) %>%
+        summarize(games = n_distinct(game_id))
 
 ```
 
@@ -714,9 +622,450 @@ The other approach is direct forecasting, where we train separate models to dire
 
 ### Direct Forecasting
 
-We'll set our forecasting horizon as 7, 30, 90, 180, and 365 days into the future to start. Th
+We'll set our forecasting horizon as 7, 30, 90, 180, and 365 days into the future to start.
 
 This requires us to set up the data with lags for forecasting. 
+
+```{r set up dataset with lags}
+
+# variables we will lag
+lag_vars<-c("users_rated",
+           #  "bayes_average",
+             "bgg_average")
+
+# variables we will lead
+lead_vars<-c("users_rated")
+
+# lead horizons
+horizons = c(7, 30, 60, 90, 180)
+
+# look back
+lookback = c(90)
+
+# days since release windows
+day_windows = c(30, 60, 90, 180, 360)
+
+# get lags
+games_train_lags = games_release_train %>%
+        group_by(game_id) %>%
+        timetk::tk_augment_lags(., 
+                                .value = one_of(lag_vars),
+                                .lags = seq(1, 180, 1)) %>%
+        timetk::tk_augment_leads(., 
+                                .value = one_of(lead_vars),
+                                .lags = -horizons)
+
+# do this for validation
+games_validation_lags = games_release_validation %>%
+        group_by(game_id) %>%
+        timetk::tk_augment_lags(.,
+                                .value = one_of(lag_vars),
+                                .lags = seq(1, 180, 1)) %>%
+        timetk::tk_augment_leads(.,
+                                .value = one_of(lead_vars),
+                                .lags = -horizons)
+
+```
+
+Create datasets for training models
+
+```{r create datasets}
+
+# create function
+prep_ts_direct_function = function(input_data, input_days_since_release) {
+        
+        # get names to keep in gather
+        get_names = input_data %>%
+                filter(days_since_release == input_days_since_release) %>%
+        select_if(~ !any(is.na(.))) %>%
+        select(-contains("_lead")) %>%
+        names
+        
+        # gather for each outcome
+        games_train_lags %>%
+                filter(days_since_release == input_days_since_release) %>%
+                select_if(~ !any(is.na(.))) %>%
+                gather("outcome", "value",
+                       -one_of(get_names)) %>%
+                select(outcome, value, days_since_release, date, yearpublished, game_id, name, start_date, everything()) %>%
+                mutate(horizon = gsub("users_rated_lead", "", outcome)) %>%
+                select(horizon, everything()) %>%
+                ungroup() %>%
+                nest(-horizon, -days_since_release)
+        
+}
+```
+
+Now create datasets for training.
+
+```{r run datasets through function, warning=F, message=F}
+
+
+games_train_datasets = foreach(i = 1:length(day_windows),
+        .combine = bind_rows) %do% {
+                
+                prep_ts_direct_function(games_train_lags,
+                              day_windows[i])
+
+}
+=
+```
+
+Now train models for each horizon at each day window.
+
+```{r fig.height=6, fig.width=10 }
+
+bar = games_train_datasets %>% 
+        mutate(train = map(data,
+                           ~ .x %>%
+                                   select(value,
+                                          bgg_average,
+                                          users_rated,
+                                          minage,
+                                          minplayers,
+                                          maxplayers,
+                                          playingtime,
+                                          time_per_player,
+                                          contains("lag")
+                                          ))) %>%
+        mutate(lm = map(train, ~ lm(value ~.,
+                                  data =.x)))
+        
+
+bar %>%
+        mutate(glanced = map(lm, glance)) %>%
+        select(horizon, days_since_release, glanced) %>%
+        unnest() %>%
+        mutate_if(is.numeric, round, 3)
+
+bar %>%
+        mutate(tidied= map(lm, tidy, conf.int=T, se="robust")) %>%
+        select(horizon, days_since_release, tidied) %>%
+        unnest() %>%
+        mutate_if(is.numeric, round, 4) %>%
+        group_by(horizon, days_since_release) %>%
+        arrange(horizon, days_since_release, abs(estimate)) %>%
+        filter(term != '(Intercept)') %>%
+        group_by(days_since_release, horizon) %>%
+        slice_max(order_by = abs(estimate),
+                  n = 25,
+                  with_ties = F) %>%
+        mutate(days_since_release = factor(days_since_release,
+                                           levels = day_windows)) %>%
+        mutate(horizon = factor(horizon,
+                                levels = horizons)) %>%
+        ggplot(., aes(x=reorder_within(term, estimate, horizon),
+                      color = days_since_release,
+                      y=estimate,
+                      ymin = conf.low,
+                      ymax = conf.high))+
+        geom_pointrange(position = position_dodge(width = 1/2))+
+        facet_wrap(horizon ~.,
+                   scales = "free_y")+
+        coord_flip()+
+        theme_bw(8)+
+        scale_x_reordered()
+
+```
+
+```{r predict one game from the validation set, fig.height=8, fig.width=10}
+
+samp = games_release_validation %>%
+        select(name) %>%
+        unique() %>%
+        sample_n(24) %>%
+        pull(name)
+
+# ## A function for simulating at new x-values
+# simulateX <- function(object, nsim = 1, seed = NULL, X, ...) {
+#     object$fitted.values <- predict(object, X)
+#     simulate(object = object, nsim = nsim, seed = seed, ...)
+# }
+
+validation_samp = games_validation_lags %>%
+        filter(name %in% samp) %>%
+        filter(days_since_release %in% day_windows) %>%
+        nest(-days_since_release)
+
+pred_validation = bar %>%
+        select(horizon, days_since_release, lm) %>%
+        left_join(., validation_samp,
+                  by = "days_since_release") %>%
+        mutate(preds = map2(.x = lm,
+                            .y = data,
+                            ~ predict(.x,
+                                      newdata = .y,
+                                      interval = "predict") %>%
+                                    as_tibble())) %>%
+        select(horizon, days_since_release, data, preds)
+        # mutate(sims = map2(.x = lm,
+        #                    .y = data,
+        #                    ~ simulateX(.x,
+        #                                nsim = 100,
+        #                                X = .y) %>%
+        #                            as_tibble())) %>%
+       # select(horizon, days_since_release, data, preds, sims)
+
+# show prediction interval
+pred_validation %>%
+        select(horizon, 
+               days_since_release,
+               data,
+               preds) %>%
+        unnest() %>%
+        mutate(days = as.numeric(horizon) + days_since_release) %>%
+        mutate_at(c("fit",
+                    "lwr",
+                    "upr"),
+                  ~ exp(.)) %>%
+        ggplot(., aes(x=days))+
+        geom_ribbon(alpha = 0.5,
+                    aes(y = fit,
+                        fill = factor(days_since_release),
+                        ymin = lwr,
+                        ymax = upr)) +
+        scale_fill_grey()+
+        theme(legend.position = 'false')+
+        theme_bw(8)+
+        facet_wrap(name~.,
+                   ncol = 3,
+                   scales = "free_y")+
+        geom_line(data = games_validation_lags %>%
+                          filter(name %in% samp) %>%
+                          filter(days_since_release < 365) %>%
+                          mutate(days = days_since_release),
+                          aes(x=days,
+                              by = name,
+                              y = exp(users_rated)))+
+        geom_vline(xintercept = c(day_windows),
+                   linetype = 'dotted')+
+        theme(legend.position = 'none')
+        
+#                           
+# # plot one simulation
+# pred_validation %>%
+#         select(horizon, 
+#                days_since_release,
+#                data,
+#                sims) %>%
+#         unnest() %>%
+#         select(horizon, days_since_release, game_id, name,
+#                contains("sim_")) %>%
+#         filter(days_since_release == 30) %>%
+#         arrange(name, as.numeric(horizon))
+#         select(horizon, days_since_release, game_id, name, sim_1) %>%
+#         mutate(days = as.numeric(horizon) + days_since_release) %>%
+#         ggplot(., aes(x=days,
+#                       y = sim_1))+
+#         facet_wrap(name~.,
+#                    ncol = 1)+
+#         geom_point()
+# 
+#         ggplot(., aes(x=))
+# 
+#         gather(".sim", "value",
+#                -horizon,
+#                -days_since_release,
+#                -game_id,
+#                -name) %>%
+#         mutate(horizon = factor(horizon,
+#                                 level = horizons)) %>%
+#         ggplot(., aes(x=days,
+#                       color = horizon,
+#                       y = exp(value),
+#                       by = .sim))+
+#         geom_line()+
+#         # geom_smooth(se = F,
+#         #             alpha = 0.5,
+#         #             size = 0.5,
+#         #             col = 'grey40')+
+#         facet_wrap(game_id + name~ horizon,
+#                    ncol = 4)
+
+```
+
+
+```{r}
+
+# set up h horizons
+h = c(30)
+
+# define lag select
+lag_select = paste(
+        paste(lag_vars,
+                   "lag",
+              sep = "_"),
+        seq(30, 45, 1),
+        sep = "")
+
+# define temporary dataset
+temp = games_train_lags  %>%
+        filter(days_since_release %in% c(45, 60, 90, 180, 365)) %>%
+        mutate(horizon = h) %>%
+        select(horizon,
+               date,
+               game_id,
+               yearpublished,
+               name,
+               days_since_release,
+               users_rated,
+               minage,
+               playingtime,
+               minplayers,
+               maxplayers,
+               contains("lag")) %>%
+        mutate(minplayers = case_when(minplayers < 1 ~ 1,
+                                                     minplayers > 10 ~ 10, # truncate
+                                                     TRUE ~ minplayers),
+               maxplayers = case_when(maxplayers < 1 ~ minplayers,
+                                                     maxplayers > 20 ~ 20,
+                                                     TRUE ~ maxplayers)) %>%
+        mutate(time_per_player = playingtime/ maxplayers) %>% # make time per player variable
+        mutate(playingtime = log1p(playingtime),
+               time_per_player = log1p(time_per_player))
+
+
+
+
+
+
+        nest(-horizon, -days_since_release)
+        select(horizon,
+               date,
+               game_id,
+               yearpublished,
+               name,
+               days_since_release,
+               users_rated,
+               minage,
+               playingtime,
+               minplayers,
+               maxplayers,
+               one_of(lag_select)) %>%
+        filter(days_since_release == c(45, 60, 90, 180)) %>%
+        nest(-horizon, -days_since_release) %>%
+                mutate(prepped = map(data, ~ .x %>% select_if(~ !any(is.na(.)))))
+                
+
+
+```
+
+
+
+```{r define a recipe}
+
+# recipe
+temp_recipe = recipe(users_rated ~.,
+                     temp) %>%
+        update_role(horizon,
+                    game_id,
+                    yearpublished,
+                    name,
+                    days_since_release,
+                    new_role = "id") %>%
+        step_mutate(minplayers = case_when(minplayers < 1 ~ 1,
+                                                     minplayers > 10 ~ 10, # truncate
+                                                     TRUE ~ minplayers),
+                    maxplayers = case_when(maxplayers < 1 ~ minplayers,
+                                                     maxplayers > 20 ~ 20,
+                                                     TRUE ~ maxplayers)) %>%
+        step_mutate(time_per_player = playingtime/ maxplayers) %>% # make time per player variable
+        step_log(playingtime,
+                   time_per_player,
+                   offset = 1)
+
+
+# bake
+baked = temp_recipe %>%
+        prep(temp, strings_as_factor =F) %>%
+        bake(new_data = NULL)
+
+baked %>%
+        select_if(is.numeric) %>%
+        select(-horizon, -game_id, -yearpublished, - days_since_release) %>%
+        cor() %>%
+        corrplot()
+
+# linear model
+linear_reg_mod<-
+        linear_reg(mode = "regression",
+                   engine = "lm")
+
+# penalized linear regression
+glmnet_reg_mod<- 
+  linear_reg(penalty = tune::tune(),
+             mixture = 0.5) %>%
+  set_engine("glmnet")
+
+# specify grid for tuning
+glmnet_grid <- tibble(penalty = 10^seq(-4, -0.5, 
+                                       length.out = 30))
+
+
+# glmnet
+temp_lm_workflow = 
+        workflow() %>%
+        add_model(linear_reg_mod) %>%
+        add_recipe(temp_recipe)
+
+```
+
+Folds for temp
+
+```{r train folds}
+
+set.seed(1999)
+temp_folds= vfold_cv(temp,
+                      strata = users_rated,
+                      v=5)
+
+# control for resamples
+keep_pred <- control_resamples(save_pred = TRUE, 
+                               save_workflow = TRUE)
+```
+
+
+```{r fit simple linear model}
+
+temp_lm = temp_lm_workflow %>%
+        fit_resamples(temp_folds,
+                      save_pred = T)
+
+temp_lm %>%
+        
+
+
+
+```
+
+
+```{r define splits}
+
+library(modeldata)
+
+roll_rs <- rolling_origin(
+  drinks, 
+  initial = 12 * 20, 
+  assess = 12,
+  cumulative = FALSE
+  )
+
+train+windows =
+        c(min(temp$days_since_release),
+          min(temp$days_since_release+60)
+
+temp %>%
+        group_by(days_since_release) %>%
+        count() %>%
+        ggplot(., aes(x=days_since_release,
+                     y=n))+
+        geom_col()
+        
+
+
+```
+
+
 
 <!-- Now, this information might include lagged values $T_{i-1, i-2, ..}$.  -->
 

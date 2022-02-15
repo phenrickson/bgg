@@ -603,7 +603,7 @@ bigram_counts %>%
 
 Another way to investigate word pairings is to create a network of the most frequent word pairings.
 
-```{r network of bigrams, fig.height=12, fig.width=15}
+```{r network of bigrams, fig.height=13, fig.width=15}
 
 # specify grid type
 a <- grid::arrow(type = "closed", 
@@ -649,7 +649,7 @@ word_cors <- tidy_tokens %>%
 
 We can make a network of word correlations, somewhat similar to the network plot shown above, but this time with no emphasis on direction.
 
-```{r show network of correlation, fig.height=12, fig.width=15, warning=F, message=F}
+```{r show network of correlation, fig.height=13, fig.width=15, warning=F, message=F}
 
 set.seed(1999)
 word_cors %>%
@@ -659,13 +659,14 @@ word_cors %>%
   geom_edge_link(aes(edge_alpha = correlation), show.legend = FALSE) +
   geom_node_point(color = "lightblue", size = 2, alpha = 0.6) +
         geom_node_text(aes(label = name), size = 3,
-                       vjust = - 1,
-                       repel = F) +
+                  #     vjust = - 1,
+                       segment.color = 'grey80',
+                       repel = T) +
   theme_void()+
         theme(plot.title = element_text(hjust = 0.5),
               plot.subtitle = element_text(hjust = 0.5),
               plot.caption = element_text(hjust = 0.5))+
-ggtitle("Network of correlated word parirings in board game descriptions",
+ggtitle("Network of word parirings in board game descriptions",
                 subtitle = paste("Displaying frequently occuring words with highest pairwise correlation in boardgamegeek game descriptions after removing stop words",
                                  "\n",
                                  "Line thickness indicates level of correlation between words"))+
