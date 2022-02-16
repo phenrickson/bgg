@@ -36,3 +36,4 @@ vignettes/*.pdf
 active
 local
 .icloud
+.Rds
