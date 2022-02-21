@@ -1,8 +1,9 @@
-average_col_func <-
+complexity_col_func <-
 function(x) {
         
-        breaks = seq(6.5, 9.9, 0.1)
-        colorRamp=colorRampPalette(c("white", "deepskyblue1"))
+        breaks<-seq(1, 5, 0.1)
+        #  breaks = weight_deciles
+        colorRamp=colorRampPalette(c("white", "red"))
         col_palette <- colorRamp(length(breaks))
         mycut <- cut(x, 
                      breaks = breaks,
