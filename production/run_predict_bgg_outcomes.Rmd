@@ -1,0 +1,579 @@
+---
+title: "Predicting Upcoming Board Games"
+author: "Phil Henrickson"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: TRUE #adds a Table of Contents
+    number_sections: TRUE #number your headings/sections
+    toc_float: TRUE #let your ToC follow you as you scroll
+    theme: cerulean #select a different theme from the default
+    keep_md: no
+    fig.caption: yes
+header-includes:
+ \usepackage{float}
+# knit: (function(input_file, encoding) {
+#   out_dir <- 'docs';
+#   rmarkdown::render(input_file,
+#  encoding=encoding,
+#  output_file=file.path(dirname(input_file), out_dir, 'top_upcoming_games.html'))})
+# knit: (function(input_file, encoding) {
+#         out_dir <- 'docs';
+#         rmarkdown::render(
+#         input = here::here('production', 'run_predict_bgg_outcomes.Rmd'),
+#         encoding = encoding,
+#         output_dir = here::here('docs'),
+#         output_file = 'top_upcoming_games.html'
+#         )})
+---
+
+```{r global settings, echo=F, warning=F, message=F, results='hide'}
+
+knitr::opts_chunk$set(echo = F,
+                      error=F,
+                      dev="png",
+                      fig.width = 10,
+                      fig.height = 8,
+                      fig.pos = 'H')
+
+options(knitr.duplicate.label = "allow")
+
+```
+
+
+```{r get functions, warning = F, message=F, results = 'hide', include=FALSE}
+
+# get functions
+source(here::here("scripts/load_packages.R"))
+source(here::here("functions/get_bgg_data_from_github.R"))
+source(here::here("functions/get_bgg_data_from_api.R"))
+source(here::here("functions/convert_bgg_api_data_to_tables.R"))
+source(here::here("functions/predict_bgg_outcomes.R"))
+source(here::here("functions/average_col_func.R"))
+source(here::here("functions/bayesaverage_col_func.R"))
+source(here::here("functions/complexity_col_func.R"))
+
+```
+
+```{r get models, warning = F, message=F, results = 'hide', include=FALSE}
+
+average_workflow = readr::read_rds(here::here("experiments/final_average_xgbTree_fit.Rds"))
+complexity_workflow = readr::read_rds(here::here("experiments/final_complexity_xgbTree_fit.Rds"))
+usersrated_workflow = readr::read_rds(here::here("experiments/final_usersrated_xgbTree_fit.Rds"))
+template_average = readr::read_rds(here::here("experiments/final_template_average.Rds"))
+template_usersrated= readr::read_rds(here::here("experiments/final_template_usersrated.Rds"))
+
+```
+
+```{r get games from selected years}
+
+# get games from today
+bgg_today = get_bgg_data_from_github(Sys.Date())
+
+set.seed(5)
+ids = bgg_today %>%
+        filter(game_release_year==2021 | game_release_year == 2022) %>%
+        pull(game_id)
+
+```
+
+```{r push ids through api to get game tables for models, results = 'hide', include = F, warning=F, message=F}
+
+# push through api
+api_returned = get_bgg_api_data(ids)
+
+# convert to tabular
+api_tables = convert_bgg_api_data_to_tables(api_returned)
+
+# convert to format for model
+api_games_info = api_tables$games_info %>%
+        mutate(numweights = as.character(numweights)) %>% # for some reason numweights is coming through as a character...?
+        bind_rows(., template_average[0,]) %>% # bind to our template format
+        select(one_of(names(template_average))) # keep only variables in that format
+ 
+# predict with function
+out = predict_bgg_outcomes(api_games_info)
+
+# spread out predictions
+spread_out = rbindlist(out) %>%
+        spread(outcome, .pred) %>%
+        mutate(usersrated = round(exp(usersrated),0),
+               usersrated_est_complexity = round(exp(usersrated_est_complexity), 0)) %>%
+        mutate(bayesaverage = 
+                       ((5.5 * 1000) + (average * usersrated))/
+                       (1000 + usersrated)) %>%
+        mutate(`bayesaverage_est_complexity` = 
+                       ((5.5*1000) + (average_est_complexity * usersrated_est_complexity))/
+                                (1000+usersrated_est_complexity)) %>%
+        mutate_if(is.numeric, round, 2) %>%
+        select(.row, game_id, 
+               average,
+               bayesaverage,
+               usersrated,
+               complexity,
+               average_est_complexity,
+               bayesaverage_est_complexity,
+               usersrated_est_complexity)
+
+# get all predictions
+all_preds = api_games_info %>% 
+        select(yearpublished, game_id, name) %>%
+        left_join(., spread_out,
+                  by = "game_id") %>%
+        select(yearpublished, game_id, name, everything()) %>%
+        arrange(desc(bayesaverage_est_complexity)) %>%
+        mutate(date = Sys.Date()) %>%
+        select(date, everything())
+
+# save locally
+readr::write_rds(all_preds,
+                 file = here::here("predictions", paste("bgg_outcomes_", Sys.Date(), ".Rdata", sep="")))
+
+```
+
+```{r create a function to display table}
+
+# function for geek and average
+display_preds_func = function(.preds,
+                              est_complexity = T) {
+        
+        if (est_complexity == T) {
+        # display using est complexity
+                out = 
+                        .preds %>%
+                                select(-.row) %>%
+                                mutate_at(c("yearpublished", "game_id"),
+                                          ~ as.character(.)) %>%
+                             #   select(-contains("est_complexity")) %>%
+                                mutate(usersrated = plyr::round_any(usersrated, 50),
+                                       usersrated_est_complexity = plyr::round_any(usersrated_est_complexity, 50)) %>%
+                                rename(Published = yearpublished,
+                                       ID = game_id,
+                                       Game = name,
+                                       Average = average_est_complexity,
+                                       GeekRating = bayesaverage_est_complexity,
+                                       UserRatings = usersrated_est_complexity,
+                                       Complexity = complexity) %>%
+                                select(Published, ID, Game, UserRatings, Average, GeekRating, Complexity) %>%
+                                mutate(Row = row_number()) %>%
+                                select(Row, everything()) %>%
+                                flextable() %>%
+                                bg(j = "GeekRating",
+                                   bg = bayesaverage_col_func) %>%
+                                bg(j="Average",
+                                  bg = average_col_func) %>%
+                                bg(j = "Complexity",
+                                   bg = complexity_col_func) %>%       
+                                bold(j = c("UserRatings",
+                                           "Average",
+                                           "GeekRating",
+                                           "Complexity"),
+                                     part = "header") %>%
+                                flextable::align(j = c("UserRatings",
+                                                       "Average",
+                                                       "GeekRating",
+                                                       "Complexity"),
+                                                 align = "center",
+                                                 part = "all") %>%
+                                add_header_row(values = 
+                                                       c("",
+                                                         "",
+                                                         "",
+                                                         "",
+                                                         "Estimated",
+                                                         "Estimated",
+                                                         "Estimated",
+                                                         "Estimated")) %>%
+                                merge_h(part = "header") %>%
+                                # hline(j = c("UsersRated",
+                                #                          "Average",
+                                #                          "GeekRating",
+                                #                          "Complexity"), 
+                                #       part = "header") %>%
+                                autofit()
+        
+        } else {
+                out = 
+                        .preds %>%
+                                select(-.row) %>%
+                                mutate_at(c("yearpublished", "game_id"),
+                                          ~ as.character(.)) %>%
+                             #   select(-contains("est_complexity")) %>%
+                                mutate(usersrated = plyr::round_any(usersrated, 50),
+                                       usersrated_est_complexity = plyr::round_any(usersrated_est_complexity, 50)) %>%
+                                rename(Published = yearpublished,
+                                       ID = game_id,
+                                       Game = name,
+                                       Average = average,
+                                       GeekRating = bayesaverage,
+                                       UserRatings = usersrated,
+                                       Complexity = complexity) %>%
+                                select(Published, ID, Game, UserRatings, Average, GeekRating, Complexity) %>%
+                                mutate(Row = row_number()) %>%
+                                select(Row, everything()) %>%
+                                flextable() %>%
+                                bg(j = "GeekRating",
+                                   bg = bayesaverage_col_func) %>%
+                                bg(j="Average",
+                                  bg = average_col_func) %>%
+                                bg(j = "Complexity",
+                                   bg = complexity_col_func) %>%       
+                                bold(j = c("UserRatings",
+                                           "Average",
+                                           "GeekRating",
+                                           "Complexity"),
+                                     part = "header") %>%
+                                flextable::align(j = c("UserRatings",
+                                                       "Average",
+                                                       "GeekRating",
+                                                       "Complexity"),
+                                                 align = "center",
+                                                 part = "all") %>%
+                                add_header_row(values = 
+                                                       c("",
+                                                         "",
+                                                         "",
+                                                         "",
+                                                         "Estimated",
+                                                         "Estimated",
+                                                         "Estimated",
+                                                         "Estimated")) %>%
+                                merge_h(part = "header") %>%
+                                # hline(j = c("UsersRated",
+                                #                          "Average",
+                                #                          "GeekRating",
+                                #                          "Complexity"), 
+                                #       part = "header") %>%
+                                autofit()
+                
+        }
+        
+        return(out)
+        
+}
+
+
+# function for table with type
+display_preds_func2 = function(.preds,
+                               .type,
+                              est_complexity = T) {
+        
+        
+        if (est_complexity == T) {
+        # display using est complexity
+                out = 
+                        .preds %>%
+                                select(-.row) %>%
+                                mutate_at(c("yearpublished", "game_id"),
+                                          ~ as.character(.)) %>%
+                             #   select(-contains("est_complexity")) %>%
+                                mutate(usersrated = plyr::round_any(usersrated, 50),
+                                       usersrated_est_complexity = plyr::round_any(usersrated_est_complexity, 50)) %>%
+                                rename(Published = yearpublished,
+                                       ID = game_id,
+                                       Game = name,
+                                       Average = average_est_complexity,
+                                       GeekRating = bayesaverage_est_complexity,
+                                       UserRatings = usersrated_est_complexity,
+                                       Complexity = complexity) %>%
+                                select(Published, ID, Game, UserRatings, Average, GeekRating, Complexity) %>%
+                                mutate(Row = row_number()) %>%
+                        mutate(Type = paste(.type)) %>%
+                                select(Row, Type, everything()) %>%
+                                flextable() %>%
+                                bg(j = "GeekRating",
+                                   bg = bayesaverage_col_func) %>%
+                                bg(j="Average",
+                                  bg = average_col_func) %>%
+                                bg(j = "Complexity",
+                                   bg = complexity_col_func) %>%       
+                                bold(j = c("UserRatings",
+                                           "Average",
+                                           "GeekRating",
+                                           "Complexity"),
+                                     part = "header") %>%
+                                flextable::align(j = c("UserRatings",
+                                                       "Average",
+                                                       "GeekRating",
+                                                       "Complexity"),
+                                                 align = "center",
+                                                 part = "all") %>%
+                                add_header_row(values = 
+                                                       c("",
+                                                         "",
+                                                         "",
+                                                         "",
+                                                         "",
+                                                         "Estimated",
+                                                         "Estimated",
+                                                         "Estimated",
+                                                         "Estimated")) %>%
+                                merge_h(part = "header") %>%
+                                # hline(j = c("UsersRated",
+                                #                          "Average",
+                                #                          "GeekRating",
+                                #                          "Complexity"), 
+                                #       part = "header") %>%
+                                autofit()
+        
+        } else {
+                out = 
+                        .preds %>%
+                                select(-.row) %>%
+                                mutate_at(c("yearpublished", "game_id"),
+                                          ~ as.character(.)) %>%
+                             #   select(-contains("est_complexity")) %>%
+                                mutate(usersrated = plyr::round_any(usersrated, 50),
+                                       usersrated_est_complexity = plyr::round_any(usersrated_est_complexity, 50)) %>%
+                                rename(Published = yearpublished,
+                                       ID = game_id,
+                                       Game = name,
+                                       Average = average,
+                                       GeekRating = bayesaverage,
+                                       UserRatings = usersrated,
+                                       Complexity = complexity) %>%
+                                select(Published, ID, Game, UserRatings, Average, GeekRating, Complexity) %>%
+                                mutate(Row = row_number()) %>%
+                        mutate(Type = paste(.type)) %>%
+                                select(Row, Type, everything()) %>%
+                                flextable() %>%
+                                bg(j = "GeekRating",
+                                   bg = bayesaverage_col_func) %>%
+                                bg(j="Average",
+                                  bg = average_col_func) %>%
+                                bg(j = "Complexity",
+                                   bg = complexity_col_func) %>%       
+                                bold(j = c("UserRatings",
+                                           "Average",
+                                           "GeekRating",
+                                           "Complexity"),
+                                     part = "header") %>%
+                                flextable::align(j = c("UserRatings",
+                                                       "Average",
+                                                       "GeekRating",
+                                                       "Complexity"),
+                                                 align = "center",
+                                                 part = "all") %>%
+                                add_header_row(values = 
+                                                       c("",
+                                                         "",
+                                                         "",
+                                                         "",
+                                                         "",
+                                                         "Estimated",
+                                                         "Estimated",
+                                                         "Estimated",
+                                                         "Estimated")) %>%
+                                merge_h(part = "header") %>%
+                                # hline(j = c("UsersRated",
+                                #                          "Average",
+                                #                          "GeekRating",
+                                #                          "Complexity"), 
+                                #       part = "header") %>%
+                                autofit()
+                
+        }
+        
+        return(out)
+        
+}
+```
+
+# What is this analysis? {-}
+
+Which upcoming board games are likely to be highly rated on boardgamegeek.com?
+
+To answer this question, I trained predictive models on historical data from BGG. These models look at information known about a game at the time of its release in order to estimate its eventual average rating, geek rating, complexity, and number of user ratings. For each of these outcomes, I trained models (using gradient boosted trees) on board games published through 2020. I then use the models to estimate BGG outcomes for all upcoming games.
+
+# Top 100 Upcoming Games
+
+What games published in 2021 and 2022 are expected to be the highest rated?
+
+## Geek Rating
+
+What are the top games according to the estimated **geek** rating? The geek rating uses a combination of the average rating and the number of user ratings, so games estimated to be high on the geek rating are expected to be both well rated and popular.
+
+```{r display top 100 for geekrating}
+
+# join back up and take a look
+preds = api_games_info %>% 
+        select(yearpublished, game_id, name) %>%
+        left_join(., spread_out,
+                  by = "game_id") %>%
+        select(yearpublished, game_id, name, everything()) %>%
+        arrange(desc(bayesaverage_est_complexity)) %>%
+        head(100)
+
+# make table
+display_preds_func(.preds = preds,
+                   est_complexity=T)
+
+```
+
+## Average Rating
+
+What are the top games according to the estimated **average** rating? This rating is simply the average of all ratings assigned to a game by BGG users. The top games by this metric are games that are expected to be very well rated, even if by only a small set of users. 
+
+```{r display top 100 for average} 
+
+# join back up and take a look
+preds = api_games_info %>% 
+        select(yearpublished, game_id, name) %>%
+        left_join(., spread_out,
+                  by = "game_id") %>%
+        select(yearpublished, game_id, name, everything()) %>%
+        arrange(desc(average_est_complexity)) %>%
+        head(100)
+
+# make table
+display_preds_func(.preds = preds,
+                   est_complexity=T)
+
+```
+
+# Top Upcoming Games by Category
+
+We can examine this further by looking at the top games within particular categories using the estimated average rating. 
+
+## Fantasy
+
+```{r top 50 for fantasy}
+
+# join back up and take a look
+preds = api_games_info %>% 
+        filter(category_fantasy == 1) %>%
+        select(yearpublished, game_id, name) %>%
+        left_join(., spread_out,
+                  by = "game_id") %>%
+        select(yearpublished, game_id, name, everything()) %>%
+        arrange(desc(average_est_complexity)) %>%
+        head(50)
+
+# make table
+display_preds_func2(.preds = preds,
+                   .type = 'Fantasy',
+                   est_complexity=T)
+
+```
+
+
+## Economic
+
+```{r top 50 for economic}
+
+# join back up and take a look
+preds = api_games_info %>% 
+        filter(category_economic == 1) %>%
+        select(yearpublished, game_id, name) %>%
+        left_join(., spread_out,
+                  by = "game_id") %>%
+        select(yearpublished, game_id, name, everything()) %>%
+        arrange(desc(average_est_complexity)) %>%
+        head(50)
+
+# make table
+display_preds_func2(.preds = preds,
+                   .type = 'Economic',
+                   est_complexity=T)
+
+```
+
+## Wargames
+
+```{r top 50 for wargame}
+
+# join back up and take a look
+preds = api_games_info %>% 
+        filter(category_wargame == 1) %>%
+        select(yearpublished, game_id, name) %>%
+        left_join(., spread_out,
+                  by = "game_id") %>%
+        select(yearpublished, game_id, name, everything()) %>%
+        arrange(desc(average_est_complexity)) %>%
+        head(50)
+
+# make table
+display_preds_func2(.preds = preds,
+                   .type = 'Wargame',
+                   est_complexity=T)
+
+```
+
+## Party
+
+```{r top 50 for party games}
+
+# join back up and take a look
+preds = api_games_info %>% 
+        filter(category_party_game == 1) %>%
+        select(yearpublished, game_id, name) %>%
+        left_join(., spread_out,
+                  by = "game_id") %>%
+        select(yearpublished, game_id, name, everything()) %>%
+        arrange(desc(average_est_complexity)) %>%
+        head(50)
+
+# make table
+display_preds_func2(.preds = preds,
+                   .type = 'Party',
+                   est_complexity=T)
+
+```
+
+## Cardgames
+
+```{r top 50 for card games}
+
+# join back up and take a look
+preds = api_games_info %>% 
+        filter(category_card_game == 1) %>%
+        select(yearpublished, game_id, name) %>%
+        left_join(., spread_out,
+                  by = "game_id") %>%
+        select(yearpublished, game_id, name, everything()) %>%
+        arrange(desc(average_est_complexity)) %>%
+        head(50)
+
+# make table
+display_preds_func2(.preds = preds,
+                   .type = 'Cardgame',
+                   est_complexity=T)
+
+```
+
+# All Upcoming Games
+
+The tables above showed only a portion of all games that the model looked at. The table below is interactive and allows users to search for specific games and sort by the outcome they are most interested in.
+
+```{r interactive table for all upcoming}
+
+# All Upcoming Games
+
+# All Upcoming Ga
+DT::datatable(all_preds %>%
+                      select(-date) %>%
+                      select(-.row) %>%
+                      mutate_at(c("usersrated", "usersrated_est_complexity"),
+                                ~ plyr::round_any(., 50, ceiling)) %>%
+                      mutate_at(c("yearpublished", "game_id"),
+                                          ~ as.character(.)) %>%
+                      rename(Published = yearpublished,
+                             ID = game_id,
+                             Name = name,
+                             Average = average_est_complexity,
+                                    GeekRating = bayesaverage_est_complexity,
+                                    UserRatings = usersrated_est_complexity,
+                                    Complexity = complexity) %>%
+                      select(Published, 
+                             ID,
+                             Name,
+                             UserRatings,
+                             Average,
+                             GeekRating,
+                             Complexity))
+```
+
+
+```
+
+

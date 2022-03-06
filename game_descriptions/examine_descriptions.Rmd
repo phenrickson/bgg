@@ -236,6 +236,7 @@ We'll tokenize the description for each game to get a record for each word in th
 
 ```{r tokenize into individual words, warning=F, echo=T}
 
+# get stop words
 data(stop_words)
 
 # add in some custom stops
