@@ -1,0 +1,13 @@
+name: explore_bgg
+title: explore_bgg
+username:
+account: phil-henrickson
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 6074304
+bundleId: 5791367
+url: https://phil-henrickson.shinyapps.io/explore_bgg/
+when: 1649787746.377
+lastSyncTime: 1649787746.377
+asMultiple: FALSE
+asStatic: FALSE

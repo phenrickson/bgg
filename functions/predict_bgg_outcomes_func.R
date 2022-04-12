@@ -43,6 +43,7 @@ predict_bgg_outcomes_func = function(input_games_info) {
         
         # estimated bgg average given estimated averageweight
         estimated_average= average_workflow %>%
+               # predict(input_games_info) %>% 
                 predict(input_games_estimated_averageweight) %>%
                 mutate(.row = row_number()) %>%
                 mutate(outcome = "average") %>%
@@ -54,6 +55,7 @@ predict_bgg_outcomes_func = function(input_games_info) {
         
         # estimate usersrated given estimated averageweight
         estimated_usersrated = usersrated_workflow %>%
+            #    predict(input_games_info) %>% 
                 predict(input_games_estimated_averageweight) %>%
                 mutate(.row = row_number()) %>%
                 mutate(outcome = "usersrated") %>%
@@ -85,17 +87,19 @@ predict_bgg_outcomes_func = function(input_games_info) {
                 select(method, everything()) %>%
                 select(method, .row, game_id, average, usersrated, bayesaverage, averageweight)
         
-                
+        
         # now get estimated bayesaverage with stan
         estimated_outcomes_stan = usersrated_stan_workflow %>%
-                predict(input_games_estimated_averageweight) %>%
+                #predict(input_games_info) %>% 
+                     predict(input_games_estimated_averageweight) %>%
                 mutate(.row = row_number()) %>%
                 mutate(outcome = "usersrated") %>%
                 select(outcome, .pred, .row) %>%
                 spread(outcome, .pred) %>%
                 left_join(., 
                           average_stan_workflow %>%
-                                  predict(input_games_estimated_averageweight) %>%
+                          #        predict(input_games_estimated_averageweight) %>%
+                          #        predict(input_games_estimated_averageweight) %>%
                                   mutate(.row = row_number()) %>%
                                   mutate(outcome = "average") %>%
                                   select(outcome, .pred, .row) %>%
@@ -114,9 +118,9 @@ predict_bgg_outcomes_func = function(input_games_info) {
                           by = c(".row", "game_id")) %>%
                 mutate(method = "stan_lm") %>%
                 select(method, .row, game_id, average, usersrated, bayesaverage, averageweight)
-
+        
         out = list("estimated_outcomes_stan" = estimated_outcomes_stan,
-                   "esttimated_outcomes_xgbTree" = estimated_outcomes_xgbTree)
+                   "estimated_outcomes_xgbTree" = estimated_outcomes_xgbTree)
         
         return(out)
         

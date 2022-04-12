@@ -19,7 +19,9 @@ function(input_game_id) {
         # get thumbnails
         info_parser = function(var) {
                 
-                foreach(i = 1:length(input_game_id), .combine = bind_rows) %do% {
+                foreach(i = 1:length(input_game_id),
+                        .errorhandling = 'pass',
+                        .combine = bind_rows) %do% {
                         getNodeSet(parsed, "//item")[[i]][paste(var)] %>%
                                 lapply(., xmlToList) %>%
                                 do.call(rbind, .) %>% 
@@ -54,7 +56,9 @@ function(input_game_id) {
         ## summary info
         # summary of game
         summary_parser = function(var) {
-                foreach(i = 1:length(input_game_id), .combine = bind_rows) %do% {
+                foreach(i = 1:length(input_game_id), 
+                        .errorhandling = 'pass',
+                        .combine = bind_rows) %do% {
                         getNodeSet(parsed, "//item")[[i]][paste(var)] %>%
                                 lapply(., xmlToList) %>%
                                 do.call(rbind, .) %>% 
@@ -78,6 +82,7 @@ function(input_game_id) {
         
         # get game summary
         game_summary = foreach(h = 1:length(summary),
+                               .errorhandling = 'pass',
                                .combine = bind_rows) %do% {
                                        summary_parser(var = summary[h])
                                }
@@ -97,7 +102,9 @@ function(input_game_id) {
         
         # function
         stats_parser = function(var) {
-                foreach(i = 1:length(input_game_id), .combine = bind_rows) %do% {
+                foreach(i = 1:length(input_game_id), 
+                        .errorhandling = 'pass',
+                        .combine = bind_rows) %do% {
                         
                         getNodeSet(parsed, "//ratings")[[i]][paste(var)] %>%
                                 lapply(., xmlToList) %>%
@@ -111,14 +118,18 @@ function(input_game_id) {
         }
         
         # get stats
-        game_stats = foreach(h=1:length(stats), .combine = bind_rows) %do% {
+        game_stats = foreach(h=1:length(stats),
+                             .errorhandling = 'pass',
+                             .combine = bind_rows) %do% {
                 stats_parser(var = stats[h])
         }
         
         # get ranks
         # function
         ranks_parser = function(var) {
-                foreach(i = 1:length(input_game_id), .combine = bind_rows) %do% {
+                foreach(i = 1:length(input_game_id), 
+                        .errorhandling = 'pass',
+                        .combine = bind_rows) %do% {
                         
                         getNodeSet(parsed, "//ranks")[[i]][paste(var)] %>%
                                 lapply(., xmlToList) %>%

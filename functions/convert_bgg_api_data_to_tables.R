@@ -15,6 +15,21 @@ convert_bgg_api_data_to_tables =
                 mutate(id = as.integer(id),
                        type = gsub("boardgame", "", type))
         
+        # pivot and spread these out
+        game_types_pivoted = game_types %>%
+                select(game_id, type, value) %>%
+                mutate(type_abbrev = substr(type, 1, 3)) %>%
+                mutate(value = tolower(gsub("[[:space:]]", "_", gsub("\\s+", " ", gsub("[[:punct:]]","", value))))) %>%
+                mutate(type = paste(type, value, sep="_")) %>%
+                mutate(has_type = 1) %>%
+                select(-value) %>%
+                pivot_wider(names_from = c("type"),
+                            values_from = c("has_type"),
+                            id_cols = c("game_id"),
+                            names_sep = "_",
+                            values_fn = min,
+                            values_fill = 0)
+        
         # playercounts
         game_playercounts = input_api_returned$game_playercounts %>%
                 as_tibble() %>%
@@ -101,46 +116,48 @@ convert_bgg_api_data_to_tables =
         
         ## pivot mechanics, familiess, etc, to tabular form
         
-        # categories
-        game_categories = pivot_and_dummy_types(game_types,
-                                                "category")
-        
-        # family
-        game_families= pivot_and_dummy_types(game_types,
-                                             "family") 
-        # mechanics
-        game_mechanics = pivot_and_dummy_types(game_types,
-                                               "mechanic")
-        
-        # designers
-        game_designers = pivot_and_dummy_types(game_types,
-                                               "designer") 
-        
-        # publishers
-        game_publishers = pivot_and_dummy_types(game_types,
-                                                "publisher") 
-        
-        # artists
-        game_artists = pivot_and_dummy_types(game_types,
-                                             "artist") 
+        # # categories
+        # game_categories = pivot_and_dummy_types(game_types,
+        #                                         "category")
+        # 
+        # # family
+        # game_families= pivot_and_dummy_types(game_types,
+        #                                      "family") 
+        # # mechanics
+        # game_mechanics = pivot_and_dummy_types(game_types,
+        #                                        "mechanic")
+        # 
+        # # designers
+        # game_designers = pivot_and_dummy_types(game_types,
+        #                                        "designer") 
+        # 
+        # # publishers
+        # game_publishers = pivot_and_dummy_types(game_types,
+        #                                         "publisher") 
+        # 
+        # # artists
+        # game_artists = pivot_and_dummy_types(game_types,
+        #                                      "artist") 
         
         # return
         games_out = game_info %>%
-                left_join(., game_mechanics,
-                          by = c("game_id")) %>%
-                left_join(., game_families,
-                          by = c("game_id")) %>%
-                left_join(., game_categories,
-                          by = c("game_id")) %>%
-                left_join(., game_designers,
-                          by = c("game_id")) %>%
-                left_join(., game_publishers,
-                          by = c("game_id")) %>%
-                left_join(., game_artists,
-                          by = c("game_id"))
+                left_join(., game_types_pivoted,
+                                  by = c("game_id"))
+                # left_join(., game_mechanics,
+                #           by = c("game_id")) %>%
+                # left_join(., game_families,
+                #           by = c("game_id")) %>%
+                # left_join(., game_categories,
+                #           by = c("game_id")) %>%
+                # left_join(., game_designers,
+                #           by = c("game_id")) %>%
+                # left_join(., game_publishers,
+                #           by = c("game_id")) %>%
+                # left_join(., game_artists,
+                #           by = c("game_id"))
 
-        out = list("games_types" = game_types,
-                   "games_info" = games_out,
+        out = list("game_types" = game_types,
+                   "game_info" = games_out,
                    "game_playercounts" = game_playercounts,
                    "game_descriptions" = game_descriptions,
                    "game_names" = game_names,

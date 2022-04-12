@@ -1,0 +1,536 @@
+--- 
+title: "Find a Boardgame!"
+author: "https://phenrickson.github.io/data-analysis-paralysis/boardgames.html"
+output:
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    social: menu
+    source_code: embed
+runtime: shinyWidgets
+---
+
+```{r setup, include=FALSE, warning=F, message=F}
+
+#source("load_packages.R")
+library(tidyverse)
+library(ggplot2)
+library(ggthemes)
+library(dplyr)
+library(data.table)
+library(magrittr)
+library(reshape2)
+library(rsconnect)
+#library(webshot2)
+#library(magick)
+#library(flextable)
+#library(bggAnalytics)
+#library(tidymodels)
+#library(workflows)
+#library(rsample)
+library(flexdashboard)
+library(shiny)
+library(shinyWidgets)
+library(knitr)
+#library(DT)
+source("functions/tidy_name_func.R")
+source("functions/theme_phil.R")
+rm(a)
+
+# laod in active files
+games_dashboard  = 
+        readr::read_rds("dashboards/games_dashboard.Rdata") %>%
+        select(-mechanic_realtime) %>%
+        select(-mechanic_negotiation) %>%
+        select(-mechanic_deduction) %>%
+        mutate_if(is.numeric, replace_na, 0) %>%
+        filter(averageweight !=0)
+
+# get player counts
+playercounts = readr::read_rds("dashboards/games_playercounts.Rdata")
+
+# categories
+categories = c("Any Category",
+               games_dashboard %>%
+        select(starts_with("category_")) %>%
+        names() %>%
+        tidy_name_func(.) %>%
+                sort()
+)
+
+# families
+families= c("Any Family",
+               games_dashboard %>%
+        select(starts_with("family_")) %>%
+        names() %>%
+        tidy_name_func(.) %>%
+                sort()
+)
+
+# mechanics
+mechanics = c("Any Mechanic",
+              games_dashboard %>%
+        select(starts_with("mechanic_")) %>%
+        names() %>%
+        tidy_name_func(.) %>%
+                sort()
+)
+
+# designers
+designers = c("Any Designer",
+              games_dashboard %>%
+        select(starts_with("designer_")) %>%
+        names() %>%
+        tidy_name_func(.) %>%
+                sort()
+        )
+
+# artists
+artists = c("Any Artist",
+              games_dashboard %>%
+        select(starts_with("artist_")) %>%
+        names() %>%
+        tidy_name_func(.) %>%
+      #  gsub("Art ", "", .) %>%
+                sort()
+      )
+
+# remove artist
+artists2 = c("Any Artist",
+              games_dashboard %>%
+        select(starts_with("artist_")) %>%
+        names() %>%
+        tidy_name_func(.) %>%
+        gsub("Artist ", "", .) %>%
+                sort()
+)
+
+# publishers
+publishers = c("Any Publisher",
+              games_dashboard %>%
+        select(starts_with("publisher_")) %>%
+        names() %>%
+        tidy_name_func(.) %>%
+                sort()
+)
+
+# playercounts
+players = playercounts %>%
+        filter(numberplayers > 0) %>%
+        filter(value == 'Recommended') %>%
+        select(playercount) %>%
+        unique() %>%
+        arrange(playercount) %>%
+        pull()
+
+# get to a vector
+p <- function(v) {
+  Reduce(f=paste(sep=","), x = v)
+}
+best_players_vector = playercounts %>%
+        filter(value == 'Recommended' | value == 'Best') %>%
+        select(game_id, playercount) %>%
+        unique() %>%
+        group_by(game_id) %>%
+        summarise(best_players= paste0(playercount, collapse=","))
+
+rec_players_vector = playercounts %>%
+        filter(value == 'Recommended') %>%
+        select(game_id, playercount) %>%
+        unique() %>%
+        group_by(game_id) %>%
+        summarise(rec_players= paste0(playercount, collapse=","))
+
+# renamed
+renamed_data = games_dashboard %>%
+        rename(numtrading = trading) %>%
+        set_colnames(., tidy_name_func(names(.))) %>%
+        rename(ID = `Game Id`)
+
+# refresh
+refresh_date = as.Date(games_dashboard$timestamp[1])
+
+```
+
+Column {.sidebar}
+-----------------------------------------------------------------------
+**About:**
+
+This dashboard is for filtering and examining boardgames using data from boardgamegeek.com. 
+
+Select from the filters below to find games that might be a good fit for you.
+
+```{r set up sidebar}
+
+pickerInput("players",
+            "Recommended Player Count",
+            choices = players,
+            selected = players,
+            options = list(`actions-box` = TRUE),
+                           # `deselect-all-text` = "None",
+                           # `select-all-text` = "Any"),
+            multiple = T)
+
+# sliderTextInput(
+#         inputId = "complexity",
+#    label = "Select Complexity Range", 
+#    choices = seq(1, 5, 0.25),
+#    selected = c(1, 5),
+#    grid = TRUE
+# )
+
+sliderInput("complexity", 
+            "Select Complexity Range",
+            min = 1, 
+            max = 5,
+            step = 0.25,
+            value = c(1,5))
+
+selectInput("categories",
+            "Select a Category",
+            categories,
+        #    multiple = T,
+            selected = "Any Category")
+
+selectInput("families",
+            "Select a Game Family",
+            families,
+        #    multiple = T,
+            selected = "Any Family")
+
+selectInput("designers",
+            "Select a Designer",
+            designers,
+            selected = "Any Designer")
+
+selectInput("mechanics",
+            "Select a Mechanic",
+            mechanics,
+      #      multiple = T,
+            selected = "Any Mechanic")
+
+selectInput("publishers",
+            "Select a Publisher",
+            publishers,
+     #       multiple = T,
+            selected = "Any Publisher")
+
+selectInput("artists",
+            "Select an Artist",
+            artists,
+     #       multiple = T,
+            selected = "Any Artist")
+
+```
+
+Data last refreshed on **`r refresh_date`**
+
+Column {.tabset data-width=350}
+-----------------------------------------------------------------------
+
+```{r get data for tables}
+
+selected_games = reactive({
+  renamed_data %>%
+                mutate(`Any Category` = 1) %>%
+                mutate(`Any Mechanic` = 1) %>%
+                mutate(`Any Designer` = 1) %>%
+                mutate(`Any Publisher` = 1) %>%
+                mutate(`Any Family` = 1) %>%
+                mutate(`Any Artist` = 1) %>%
+                filter(`Average Weight` >= min(input$complexity) & 
+                               `Average Weight` <= max(input$complexity)) %>%
+                filter_at(vars(input$categories),
+                          ~ . == 1) %>%
+                filter_at(vars(input$families),
+                          ~ . == 1) %>%
+                filter_at(vars(input$mechanics),
+                          ~ . == 1) %>%
+                filter_at(vars(input$publishers),
+                          ~ . == 1) %>%
+                filter_at(vars(input$designers),
+                          ~ . == 1) %>%
+                filter_at(vars(input$artists),
+                          ~ . == 1) %>%
+    # filter(ID %in% (game_mechanics %>%
+    #                   filter(variable %in% input$mechanics) %>%
+    #                   pull(game_id))) %>%
+    # filter(ID %in% (game_categories %>%
+    #                   filter(variable %in% input$categories) %>%
+    #                   pull(game_id))) %>%
+    filter(ID %in% (playercounts %>%
+                      filter(value == 'Best') %>%
+                      filter(playercount %in% input$players) %>%
+                      pull(game_id)))
+    # filter(avgweight < input$avgweight$max)
+})
+
+selected_games_table = reactive({
+        selected_games() %>%
+                left_join(., best_players_vector %>%
+                                  rename(ID = game_id),
+                          by = "ID") %>%
+                rename(`Recommended Players` = best_players,
+                       Complexity = `Average Weight`) %>%
+                select(`Year Published`,
+                       ID,
+                       `Name`,
+                       `Recommended Players`,
+                       Complexity,
+                       `Average`,
+                       `Bayesaverage`,
+                       `Adj Bayesaverage`
+                       ) %>%
+                mutate(`Year Published` = as.character(`Year Published`),
+                       ID = as.character(ID)) %>%
+    mutate_if(is.numeric, round, 2) %>%
+                rename(`Geek Rating` = Bayesaverage,
+                       `Community Rating` = Average,
+                       `Complexity-Adjusted Rating` = `Adj Bayesaverage`) %>%
+    arrange(desc(`Geek Rating`)) %>%
+                select(`Year Published`,
+                 #      ID,
+                       Name,
+                       `Recommended Players`,
+                       Complexity,
+                       `Geek Rating`,
+                       `Community Rating`,
+                       `Complexity-Adjusted Rating`)
+})
+
+```
+
+### Sort by Geek Rating
+
+```{r table sorted by Bayesaverage}
+
+
+#shiny::renderDataTable({
+renderTable({
+
+    selected_games_table() %>%
+               arrange(desc(`Geek Rating`))
+                # data.table(., rownames=T, scrollX)
+                # 
+    #     %>%
+    #             left_join(., best_players_vector %>%
+    #                               rename(ID = game_id),
+    #                       by = "ID") %>%
+    #             rename(`Recommended Players` = best_players,
+    #                    Complexity = `Average Weight`) %>%
+    #             select(`Year Published`,
+    #                    ID,
+    #                    `Name`,
+    #                    `Recommended Players`,
+    #                    Complexity,
+    #                    `Average`,
+    #                    `Bayesaverage`,
+    #                    `Adj Bayesaverage`
+    #                    ) %>%
+    #             mutate(`Year Published` = as.character(`Year Published`),
+    #                    ID = as.character(ID)) %>%
+    # mutate_if(is.numeric, round, 2) %>%
+    #             rename(`Geek Rating` = Bayesaverage,
+    #                    `Community Rating` = Average,
+    #                    `Complexity-Adjusted Rating` = `Adj Bayesaverage`) %>%
+    # arrange(desc(`Geek Rating`)) %>%
+    #             select(`Year Published`,
+    #                    ID,
+    #                    Name,
+    #                    `Recommended Players`,
+    #                    Complexity,
+    #                    `Geek Rating`,
+    #                    `Community Rating`,
+    #                    `Complexity-Adjusted Rating`)
+                       
+  }
+  )
+# },
+# options = list(columnDefs = list(list(className = 'dt-center', targets = "_all")))
+# )
+
+```
+
+### Sort by Community Rating
+
+```{r table sorted by community rating}
+
+#shiny::renderDataTable({
+renderTable({
+        
+        selected_games_table() %>%
+                arrange(desc(`Community Rating`))
+    # selected_games_table() %>%
+    #             left_join(., best_players_vector %>%
+    #                               rename(ID = game_id),
+    #                       by = "ID") %>%
+    #             rename(`Recommended Players` = best_players,
+    #                    Complexity = `Average Weight`) %>%
+    #             select(`Year Published`,
+    #                    ID,
+    #                    `Name`,
+    #                    `Recommended Players`,
+    #                    Complexity,
+    #                    `Average`,
+    #                    `Bayesaverage`,
+    #                    `Adj Bayesaverage`
+    #                    ) %>%
+    #             mutate(`Year Published` = as.character(`Year Published`),
+    #                    ID = as.character(ID)) %>%
+    # mutate_if(is.numeric, round, 2) %>%
+    #             rename(`Geek Rating` = Bayesaverage,
+    #                    `Community Rating` = Average,
+    #                    `Complexity-Adjusted Rating` = `Adj Bayesaverage`) %>%
+    # arrange(desc(`Community Rating`)) %>%
+    #             select(`Year Published`,
+    #                    ID,
+    #                    Name,
+    #                    `Recommended Players`,
+    #                    Complexity,
+    #                    `Geek Rating`,
+    #                    `Community Rating`,
+     #                 `Complexity-Adjusted Rating`)
+                       
+    }
+    )
+# },
+# options = list(columnDefs = list(list(className = 'dt-center', targets = "_all")))
+# )
+
+```
+
+### Sort by Complexity-Adjusted Rating
+
+```{r table sorted by complexity adjusted}
+
+#shiny::renderDataTable({
+renderTable({
+        
+        selected_games_table() %>%
+                arrange(desc(`Complexity-Adjusted Rating`))
+
+    }
+    )
+# },
+# options = list(columnDefs = list(list(className = 'dt-center', targets = "_all")))
+# )
+
+```
+
+
+Column {data-width=350}
+-----------------------------------------------------------------------
+### Complexity and Community Rating
+
+```{r plot complexity and rating}
+set.seed(1999)
+
+renderPlot({
+  
+  pos <- position_jitter(width = 0.15, seed = 1999)
+  
+  p = renamed_data %>%
+          ggplot(., aes(x=`Average Weight`,
+                        y=`Average`))+
+          geom_point(col='grey80',
+                     alpha=0.1,
+                     position = pos)+
+          theme_phil()+
+                  # scale_color_gradient2_tableau()+
+                  # guides(color = guide_colorbar(barheight=0.5,
+                  #                               bardwith=10))+
+                  #     theme(panel.grid.major = element_blank(),
+                  #       panel.grid.minor = element_blank())+
+    ylab("Community Rating")+
+    xlab("Complexity")+
+          coord_cartesian(xlim = c(0.5, 5.25),
+                          ylim = c(2,10))
+  
+  p+ geom_point(data = selected_games(),
+                     aes(x=`Average Weight`,
+                        color = Average,
+                        y=`Average`),
+                position = pos)+
+    geom_text(data = selected_games(),
+                     aes(x=`Average Weight`,
+                        label = Name,
+                        color = Average,
+                        y=`Average`),
+              position = pos,
+              check_overlap=T,
+              show.legend = F,
+              size = 4,
+              vjust = -1)+
+          theme_phil()+
+    theme(legend.title = element_text())+
+                  scale_color_gradient2(low = 'red', 
+                                        mid = 'grey65',
+                                        high = 'deepskyblue2',
+                                        midpoint = 6.5,
+                                        limits = c(4, 9),
+                                                oob=scales::squish)+
+                  guides(color = guide_colorbar(barheight=0.5,
+                                                title = "Average Rating ",
+                                                title.vjust = 1,
+                                                barwidth=15,
+                                                title.position = 'top'))+
+                      theme(panel.grid.major = element_blank(),
+                      panel.grid.minor = element_blank())
+})
+
+```
+
+### Number of Games by Category
+
+```{r plot ratings over time}
+
+# renderPlot({
+# selected_games() %>%
+#                 ggplot(., aes(x=`Year Published`,
+#                       label = Name,
+#                       color = Average,
+#                       y=Average))+
+#                 geom_jitter()+
+#                 geom_text(check_overlap=T,
+#                   size=3,
+#                   vjust=0.1,
+#                   show.legend = F)+
+#                 theme_phil()+
+#                 scale_color_gradient2_tableau()+
+#                 guides(color = guide_colorbar(barheight=0.5,
+#                                               bardwith=15))
+# })
+
+renderPlot({
+        selected_games() %>%
+      select(ID, Average, all_of(categories)) %>%
+    select(-`Any Category`) %>%
+    melt(id.vars=c("ID", "Average")) %>%
+    filter(value == 1) %>%
+    mutate(Average_tier = case_when(Average >= 7 ~ 'good',
+                                    Average <= 6 ~ 'bad',
+                                    TRUE ~ 'okay')) %>%
+    mutate(Average_tier = factor(Average_tier,
+                                 levels = c("bad",
+                                            "okay",
+                                            "good"))) %>%
+    group_by(variable, Average_tier) %>%
+    summarize(games = n_distinct(ID),
+              .groups = 'drop') %>%
+    group_by(variable) %>%
+    mutate(total = sum(games)) %>%  ungroup() %>% slice_max(order_by = total,
+                                               n = 25*3,
+                                               with_ties = F) %>% ggplot(., aes(x=games,
+                                                                                 fill = Average_tier, order=games,
+                                                                                 y=reorder(variable, total)))+
+    geom_col()+
+    theme_phil()+
+    xlab("Number of Games")+
+    ylab("Category")+
+    theme(panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank())+
+    scale_fill_manual(values = c("red", "grey60", "deepskyblue1"),drop=F)+
+    guides(fill = "none")
+})
+
+```
+
